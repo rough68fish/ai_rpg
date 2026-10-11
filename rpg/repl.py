@@ -4,6 +4,7 @@ import json
 import shlex
 import textwrap
 
+from . import llm
 from . import perception as P
 from . import prompts
 from . import state as S
@@ -25,6 +26,9 @@ Plain text            the traveller says it out loud (normal volume)
 /truth                ground truth and hidden objects (what is)
 /log [n]              last n events with perception rolls (default 5)
 /prompt <who>         the character prompt that would be sent, with leakage check
+/act <who>            send that prompt to the model: speech is spoken, the
+                      action is kept as a pending intent
+/pending              intents waiting for the GM (stage 3)
 /know <who> <whom>    <who> learns <whom>'s name
 /promote <who>, /demote <who>   switch agent / managed
 /save                 save a snapshot now
@@ -32,8 +36,9 @@ Plain text            the traveller says it out loud (normal volume)
 
 
 class Game:
-    def __init__(self, state, run_dir, rng):
+    def __init__(self, state, run_dir, rng, client=None):
         self.state, self.run_dir, self.rng = state, run_dir, rng
+        self.llm = client or llm.Client()
 
     # --- helpers ---------------------------------------------------------
     def _id(self, who):
@@ -78,7 +83,9 @@ class Game:
         tid = self._id(target) if target else None
         if tid and S.location(self.state, tid) != S.location(self.state, aid):
             print(f"  (note: {tid} is not in the {S.location(self.state, aid)}, so they won't hear it unless it's loud)")
-        speech = " ".join(words)
+        self._speak(aid, " ".join(words), volume, tid)
+
+    def _speak(self, aid, speech, volume, tid):
         verb = {"whisper": "whispers", "loud": "calls out", "normal": "says"}[volume]
         to = f" to {{{tid}}}" if tid else ""
         to_me = f" to {S.name_for(self.state, aid, tid)}" if tid else ""
@@ -196,6 +203,94 @@ class Game:
         problems = prompts.check_leakage(self.state, cid, sysm + user)
         print("  LEAKAGE: " + "; ".join(problems) if problems else "  leakage check: clean")
 
+    def _target_id(self, cid, text):
+        """Map the model's free-text target ("Father Tomas", "the stranger") to an id."""
+        if not text:
+            return None
+        t = text.lower().strip()
+        for oid in S.all_ids(self.state):
+            if oid == cid:
+                continue
+            rec = S.actor(self.state, oid)
+            full = (rec.get("name") or rec["identity"]["name"]).lower()
+            names = {oid, full, full.split()[-1].strip("()"), S.short(self.state, oid).lower(),
+                     S.name_for(self.state, cid, oid).lower(), S.appearance(self.state, oid).lower()}
+            if t in names or any(n in t for n in names if len(n) > 2):
+                return oid
+        if any(w in t for w in ("stranger", "traveller", "traveler", "visitor", "man at the door")):
+            return S.PLAYER
+        return None
+
+    def act(self, who):
+        """Send this character's prompt to the model and play out the reply.
+
+        Speech is spoken straight away (no check needed to talk). The physical
+        action is only recorded as a pending intent: resolving it is the GM's job
+        in stage 3."""
+        cid = self._id(who)
+        if cid == S.PLAYER:
+            print("  the player acts by typing")
+            return
+        rec = self.state["chars"][cid]
+        if rec["mode"] != "agent":
+            print(f"  ({cid} is GM-managed; acting as an agent anyway)")
+        sysm = prompts.system_message(self.state, cid)
+        user = prompts.user_message(self.state, cid)
+        problems = prompts.check_leakage(self.state, cid, sysm + user)
+        if problems:
+            print("  not sent, LEAKAGE: " + "; ".join(problems))
+            return
+        try:
+            reply, stats = self.llm.chat(sysm, user, prompts.CHARACTER_SCHEMA, llm.TEMP_CHARACTER)
+        except llm.LLMError as e:
+            print(f"  {e}")
+            return
+        clock = self.state["world"]["clock"]
+        print(f"  ({stats['seconds']}s, {stats['prompt_tokens']} in / {stats['reply_tokens']} out)")
+        print(f"  thought: {reply.get('thought')}")
+        print(f"  mood:    {reply.get('mood')}")
+        rec.setdefault("memory", []).append(
+            {"t": clock["turn"], "time": clock["time"], "importance": 2,
+             "text": f"I thought: {reply.get('thought')} (I felt {reply.get('mood')})"})
+        self._edit_list(rec, "beliefs", reply.get("new_beliefs"), reply.get("drop_beliefs"))
+        self._edit_list(rec, "goals", reply.get("new_goals"), reply.get("done_goals"))
+
+        tid = self._target_id(cid, reply.get("target"))
+        if reply.get("target"):
+            print(f"  target:  {reply['target']} -> {tid or '(not a person here)'}")
+        if reply.get("speech"):
+            print(f"  says ({reply.get('volume', 'normal')}): {reply['speech']}")
+            self._speak(cid, reply["speech"], reply.get("volume") or "normal", tid)
+        if reply.get("action"):
+            print(f"  tries:   {reply['action']}  [pending, unresolved until the GM exists]")
+            self.state.setdefault("pending", []).append(
+                {"turn": clock["turn"], "actor": cid, "action": reply["action"],
+                 "target": tid, "target_text": reply.get("target")})
+        # Everything up to here (perceptions, its thought, its own speech) is now old.
+        rec["memories_seen"] = len(rec["memory"])
+
+    @staticmethod
+    def _edit_list(rec, key, add, drop):
+        items = rec.setdefault(key, [])
+        for line in drop or []:
+            match = next((i for i in items if i.lower().strip(" .") == line.lower().strip(" .")), None)
+            if match:
+                items.remove(match)
+                print(f"  {key} -: {match}")
+            else:
+                print(f"  {key} -: (no exact match, ignored) {line}")
+        for line in add or []:
+            if line not in items:
+                items.append(line)
+                print(f"  {key} +: {line}")
+
+    def pending(self):
+        for p in self.state.get("pending", []):
+            print(f"  [{p['turn']}] {p['actor']}: {p['action']}"
+                  f"{' -> ' + p['target_text'] if p.get('target_text') else ''}")
+        if not self.state.get("pending"):
+            print("  no pending intents")
+
     def know(self, who, whom):
         rec = S.actor(self.state, self._id(who))
         rec.setdefault("known", []).append(self._id(whom))
@@ -227,6 +322,8 @@ class Game:
             "truth": self.truth,
             "log": lambda: self.log(*args),
             "prompt": lambda: self.prompt(*args),
+            "act": lambda: self.act(*args),
+            "pending": self.pending,
             "know": lambda: self.know(*args),
             "promote": lambda: self.set_mode(args[0], "agent"),
             "demote": lambda: self.set_mode(args[0], "managed"),

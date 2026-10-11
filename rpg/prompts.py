@@ -17,7 +17,17 @@ RULES = """Rules:
   sentences, the way people talk while they are busy.
 - You may choose to do nothing, keep working, or stay silent.
 - "thought" is private. No one else ever sees it. Be honest there.
-- Answer only with JSON in the requested format."""
+- Answer only with JSON in the requested format.
+
+Reply fields:
+- thought: your private thought, one or two sentences
+- speech: exactly what you say out loud, or null to stay silent
+- volume: whisper, normal or loud
+- target: the person you speak to or act on, named the way you know them, or null
+- action: what you physically try to do, or null
+- mood: one or two words
+- new_beliefs, drop_beliefs, new_goals, done_goals: lists of short lines, usually
+  empty. To drop a belief or finish a goal, copy its line exactly."""
 
 
 def _bullets(items, empty="nothing"):
@@ -46,8 +56,12 @@ How you feel about people:
 {RULES}"""
 
 
-def _is_new(entry, since):
-    return isinstance(entry["t"], int) and entry["t"] > since
+def seen_count(rec):
+    """How many memories the character has already been prompted with. Before the
+    first call that is the setup memories (the ones without a turn number)."""
+    if "memories_seen" in rec:
+        return rec["memories_seen"]
+    return sum(1 for m in rec.get("memory", []) if not isinstance(m["t"], int))
 
 
 def _select_memories(memories, limit=MAX_MEMORIES):
@@ -67,10 +81,9 @@ def user_message(state, cid):
     rec = state["chars"][cid]
     world = state["world"]
     room = rec["location"]
-    since = rec.get("last_acted_turn", -1)
     memories = rec.get("memory", [])
-    old = _select_memories([m for m in memories if not _is_new(m, since)])
-    new = [m for m in memories if _is_new(m, since)]
+    seen = seen_count(rec)
+    old, new = _select_memories(memories[:seen]), memories[seen:]
     visible = [S.name_for(state, cid, o) for o in S.in_room(state, room) if o != cid]
     return f"""It is {world['clock']['time']}. Mass is at {world['clock']['mass_at']}.
 You are in the {room}: {world['rooms'][room]['desc']}
