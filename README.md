@@ -93,7 +93,8 @@ rpg/state.py         load/save, lookups, objects, d20 roll-under
 rpg/perception.py    who perceives an event, first-person rendering, memory writes
 rpg/prompts.py       character prompts from their own record, leakage check
 rpg/llm.py           Ollama /api/chat client (schema-constrained JSON replies)
-rpg/gm.py            GM resolve: prompt, branch-and-roll, validated state changes
+rpg/gm.py            GM resolve and narrate: prompts, branch-and-roll, validated state changes
+rpg/modes.py         promotion, demotion, memory summaries
 rpg/repl.py          the REPL
 scene/               starting state (world.json, characters/*.json)
 framework.md         design: scene, perception rules, turn loop
@@ -110,13 +111,24 @@ prompts.md           GM and character prompts with schemas
 
 **A turn (plain text or `/turn`).** These are the steps of the turn loop in framework.md:
 
-1. The GM resolves what the traveller typed.
+1. The GM resolves what the traveller typed. Any GM-managed character the traveller's action targets or names, and who perceived it, is promoted to an agent (see below).
 2. Every agent with news acts, one after another. News means it perceived something from someone else since it last acted, and an agent with no news still acts every 3rd turn. Agents in the traveller's room go first, so a reply can answer what was just said.
 3. The GM resolves their actions and ticks Agnes and Martha in the same call. A managed character who was spoken to replies.
-4. The GM narrates, in second person, only the lines the traveller perceived this turn. The narration is checked for leaked truth.
-5. The clock advances and a snapshot is saved, with the input and narration in `turns`.
+4. Agents with no contact with the traveller for 5 turns are demoted to GM-managed. Contact runs both ways: they perceived the traveller, or the traveller perceived them.
+5. The GM narrates, in second person, only the lines the traveller perceived this turn. The narration is checked for leaked truth.
+6. The clock advances and a snapshot is saved, with the input, narration and any promotions or demotions in `turns`.
 
 A turn takes about 10–20 s. Plain text shows only progress and the narration; `/trace` or `/verbose` shows the rest.
+
+**Promotion and demotion (`rpg/modes.py`).** Every character has the same record in both modes, so promotion just switches who drives it. Agnes's memory of the silver box is in her record from the start, not supplied by the GM. Both switches compress the memories gathered since the last summary:
+
+- Memories with importance 7 or more are kept word for word by code.
+- The model merges the rest into at most 3 first-person lines and can add new beliefs or goals. This call sees only the character's own record and passes the leakage check.
+- At promotion, memories from the current turn stay unread, so the character's first prompt still shows the traveller's question under "What just happened".
+
+`/promote` and `/demote` run the same switch by hand.
+
+**Learning names.** `know A B` is only accepted when B's name (full, first or surname) is in the speech of that event. The traveller has no modelled name, so any line they speak counts as an introduction. Speech whose target the GM left empty goes to the one person the event text names, if there is exactly one.
 
 **Model settings.** `think: false` on every call: with thinking on, Gemma 4 spent about 900 hidden tokens per call. Temperature is 0.8 for characters, 0.4 for the GM, with `num_ctx` 8192 and `keep_alive` 30m. Once the model is loaded, a character call takes about 1.5 s and a GM call 2–8 s.
 
@@ -128,7 +140,9 @@ A turn takes about 10–20 s. Plain text shows only progress and the narration; 
 | 2 | built | Character calls (`/act`) |
 | 3 | built | GM `resolve` with branch-and-roll (`/try`, `/resolve`), replay viewer |
 | 4 | built | Full turn loop with GM `narrate` (plain text / `/turn`), narrated replays |
-| 5 | next | Managed characters: promotion when the player engages them, demotion with memory summaries |
+| 5 | built | Promotion when the traveller engages a managed character, demotion after 5 turns without contact, memory summaries |
+
+All five stages from framework.md's build order are in.
 
 Known rough edges:
 
@@ -136,6 +150,8 @@ Known rough edges:
 - Introductions don't rename the traveller: telling Pip "I'm Will" is just speech, and nobody calls the traveller Will afterwards.
 - First-person rewriting only handles a sentence-initial subject; "...but me reacts" can still appear.
 - A subtle success still gets perception rolls, so the victim of a successful pickpocket can notice it anyway.
-- Agnes and Martha only get "one small action" from the GM per turn. They can reply when spoken to, but they don't really converse, and Agnes's secret has no way out yet. Stage 5 promotes them.
+- Agnes is guarded by design. In testing she brushed off relic questions and steered Martha away from gossip. Getting the silver-box story out of her takes real persuasion, and nothing yet rewards earning her trust over several turns.
+- Demotion on leaving the building isn't implemented: the map has no street exit.
+- A promoted character with news acts every turn, even far from the traveller, until it's demoted. Agnes kept reacting to Martha's dusting for 5 turns after the traveller left.
 - Narration sometimes pads a quiet turn with invented detail ("you sit in the nave") or rewords what was said.
 - The default model is `gemma4:26b`; framework.md was planned around Gemma 4 31B.

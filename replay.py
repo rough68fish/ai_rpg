@@ -132,6 +132,7 @@ def build(state, title):
                      f'{said}</div></div>')
         parts += [roll_note(e) for e in log if e["turn"] == turn and e["event"]["actor"] == S.PLAYER]
         parts.append(f'<div class="msg in story"><div class="bubble">{esc(t["narration"])}</div></div>')
+        parts += [f'<div class="roll">{esc(note)}</div>' for note in t.get("switches", [])]
         parts.append(f'<div class="raw">{events}</div>')
 
     body = "\n".join(parts)

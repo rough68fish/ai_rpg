@@ -240,6 +240,16 @@ def _to_id(state, who):
     return None
 
 
+def _implied_target(state, actor, out, speech):
+    """Speech with no target, in text that names exactly one other person:
+    "{player} sits beside {agnes} and asks..." is spoken to Agnes."""
+    if not speech:
+        return None
+    named = {m for m in re.findall(r"\{(\w+)\}", _braced(state, out.get("text", "")))
+             if m != actor and (m == S.PLAYER or m in state["chars"])}
+    return named.pop() if len(named) == 1 else None
+
+
 def _event(state, actor, out):
     room = out.get("room")
     if room not in state["world"]["rooms"]:
@@ -252,7 +262,7 @@ def _event(state, actor, out):
     own = P.render(state, actor, _braced(state, own)) if own and actor != WORLD else None
     return {"actor": actor, "room": room, "text": _braced(state, out.get("text", "")),
             "speech": speech, "volume": volume, "subtle": bool(out.get("subtle")),
-            "target": _to_id(state, out.get("target")),
+            "target": _to_id(state, out.get("target")) or _implied_target(state, actor, out, speech),
             "actor_text": own,
             "importance": min(10, max(1, imp)) if isinstance(imp, int) else 3}
 
@@ -268,8 +278,16 @@ def _door(state, name):
     return (flipped, doors[flipped]) if flipped in doors else (name, None)
 
 
-def apply_change(state, actor, cmd, rng):
-    """Validate and apply one state change. Returns (ok, message, arrival or None)."""
+def _spoken_names(state, cid):
+    """Ways someone's name can be said aloud: "Agnes Pell", "Agnes", "Pell"."""
+    idn = state["chars"][cid]["identity"]
+    words = idn["name"].replace("(", " ").replace(")", " ").split() + idn["short"].split()
+    return {w for w in words if w not in ("Father", "Mrs.", "Mr.")} | {idn["short"]}
+
+
+def apply_change(state, actor, cmd, rng, event=None):
+    """Validate and apply one state change. Returns (ok, message, arrival or None).
+    `event` is the event the change came with, for checks that depend on it."""
     parts = cmd.split()
     if not parts:
         return False, "empty", None
@@ -337,6 +355,15 @@ def apply_change(state, actor, cmd, rng):
             who, whom = _to_id(state, args[0]), _to_id(state, args[1])
             if not who or not whom or S.location(state, who) != S.location(state, whom):
                 return False, "unknown people, or not in the same room", None
+            # A name is learned by hearing it said in this event. The traveller has
+            # no modelled name, so any speech of theirs can be an introduction.
+            speech = (event or {}).get("speech") or ""
+            if whom == S.PLAYER:
+                heard = bool(speech) and event.get("actor") == S.PLAYER
+            else:
+                heard = any(n.lower() in speech.lower() for n in _spoken_names(state, whom))
+            if not heard:
+                return False, f"nobody said {whom}'s name", None
             known = S.actor(state, who).setdefault("known", [])
             if whom not in known:
                 known.append(whom)
@@ -386,7 +413,7 @@ def play_event(state, raw, rng):
 
     report["changes"] = []
     for cmd in out.get("state_changes") or []:
-        ok, msg, arrival = apply_change(state, actor, cmd, rng)
+        ok, msg, arrival = apply_change(state, actor, cmd, rng, event)
         report["changes"].append({"cmd": cmd, "ok": ok, "msg": msg, "arrival": arrival})
     entry["state_changes"] = [{k: c[k] for k in ("cmd", "ok", "msg")} for c in report["changes"]]
     return report
@@ -426,11 +453,25 @@ Names the traveller knows: {', '.join(known) or 'none'}
 Perceived events (the traveller's own memory, "I" is the traveller):
 {_bullets(lines, 'nothing happens')}
 
-Write 2 to 6 sentences. End by quoting anything said directly to the
-traveller. Do not ask the player what they do next."""
+Write 2 to 6 sentences of plain prose: this is read by the player, so no
+{{braces}} or ids. End by quoting anything said directly to the traveller. Do
+not ask the player what they do next."""
+
+
+def _unbrace(state, text):
+    """Any {id} the narrator still wrote becomes how the traveller knows them."""
+    def sub(m):
+        cid = m.group(1)
+        if cid in state["chars"]:
+            name = S.name_for(state, S.PLAYER, cid)
+        else:
+            name = "you" if cid == S.PLAYER else cid.replace("_", " ")
+        before = m.string[:m.start()].rstrip()
+        return name[0].upper() + name[1:] if not before or before[-1] in '.!?"' else name
+    return re.sub(r"\{(\w+)\}", sub, text)
 
 
 def narrate(state, lines, client):
     """Returns (prose, stats)."""
     reply, stats = client.chat(SYSTEM, narrate_message(state, lines), NARRATE_SCHEMA, llm.TEMP_CHARACTER)
-    return reply.get("text", "").strip(), stats
+    return _unbrace(state, reply.get("text", "").strip()), stats

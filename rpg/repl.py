@@ -9,6 +9,7 @@ from contextlib import redirect_stdout
 
 from . import gm
 from . import llm
+from . import modes
 from . import perception as P
 from . import prompts
 from . import state as S
@@ -332,7 +333,9 @@ class Game:
         if not text:
             print("  /try <what you do>")
             return
-        self._gm([{"actor": S.PLAYER, "action": text}])
+        log_from = len(self.state["log"])
+        if self._gm([{"actor": S.PLAYER, "action": text}]):
+            self._promote_engaged(log_from)
 
     def resolve(self):
         intents = self.state.get("pending", [])
@@ -361,11 +364,33 @@ class Game:
                   and (self._has_news(cid) or turn - rec.get("last_acted_turn", -1) >= self.IDLE_TURNS)]
         return sorted(acting, key=lambda cid: S.location(self.state, cid) != here)
 
+    # --- promotion and demotion (stage 5) --------------------------------------
+    def _switch(self, cid, mode, why=""):
+        """Promote or demote with a memory summary. Returns a one-line note."""
+        report = (modes.promote if mode == "agent" else modes.demote)(self.state, cid, self.llm)
+        print(f"  {cid} -> {mode}{' (' + why + ')' if why else ''}: memories {report['before']}"
+              f" -> {report['after']}")
+        for line in report.get("summaries", []):
+            print(f"    summary: {line}")
+        for key in ("beliefs", "goals"):
+            for line in report[key]:
+                print(f"    {key} +: {line}")
+        if report["error"]:
+            print(f"  summary skipped for {cid}: {report['error']}", file=sys.stderr)
+        verb = "takes notice of you" if mode == "agent" else "goes back to the background"
+        return f"{S.short(self.state, cid)} {verb}" + (f" ({why})" if why else "")
+
+    def _promote_engaged(self, log_from):
+        return [self._switch(cid, "agent", "engaged by the traveller")
+                for cid in modes.engaged(self.state, log_from)]
+
     def turn(self, text=""):
         player = S.actor(self.state, S.PLAYER)
         start = len(player.setdefault("memory", []))
+        log_from = len(self.state["log"])
         clock = self.state["world"]["clock"]
         out = sys.stdout
+        switches = []
 
         def step(msg):
             print(f"  ... {msg}", file=out, flush=True)
@@ -376,6 +401,10 @@ class Game:
                 step("the GM resolves what you do")
                 print(f"\n== you: {text}")
                 self._gm([{"actor": S.PLAYER, "action": text}])
+                # Step 4: anyone the traveller engaged comes alive before acting.
+                for note in self._promote_engaged(log_from):
+                    step(note)
+                    switches.append(note)
             for cid in self._who_acts():
                 step(f"{S.short(self.state, cid)} acts")
                 print(f"\n== {cid} acts")
@@ -386,6 +415,11 @@ class Game:
                 print("\n== GM resolves")
                 if self._gm(self.state.get("pending", []), tick):
                     self.state["pending"] = []
+            modes.touch_contacts(self.state, log_from)
+            for cid in modes.idle_agents(self.state):
+                step(f"{S.short(self.state, cid)} drifts out of the story (summarising)")
+                switches.append(self._switch(cid, "managed",
+                                             f"no contact for {modes.DEMOTE_AFTER} turns"))
         self.last_trace = trace.getvalue()
 
         lines = [m["text"] for m in player["memory"][start:]]
@@ -402,7 +436,8 @@ class Game:
         print("\n" + textwrap.fill(prose, 78, initial_indent="  ", subsequent_indent="  ") + "\n")
         self.state.setdefault("turns", []).append(
             {"turn": clock["turn"], "time": clock["time"], "input": text, "narration": prose,
-             "room": S.location(self.state, S.PLAYER), "perceived": lines})
+             "room": S.location(self.state, S.PLAYER), "perceived": lines,
+             "switches": switches})
         self.next_turn()
 
     def trace(self):
@@ -425,8 +460,11 @@ class Game:
         print("  ok")
 
     def set_mode(self, who, mode):
-        self.state["chars"][self._id(who)]["mode"] = mode
-        print(f"  {who} is now {mode}")
+        cid = self._id(who)
+        if self.state["chars"][cid]["mode"] == mode:
+            print(f"  {cid} is already {mode}")
+            return
+        self._switch(cid, mode, "by hand")
 
     # --- dispatch ----------------------------------------------------------
     def handle(self, line):
