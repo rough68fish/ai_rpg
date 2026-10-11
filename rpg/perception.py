@@ -31,16 +31,39 @@ HEAR_ADJACENT_LOUD = 2
 NOTICE_SUBTLE = 0
 
 
+_IRREGULAR = {"is": "am", "was": "was", "has": "have", "does": "do", "goes": "go"}
+
+
+def _first_person(verb):
+    """'pauses' -> 'pause', 'watches' -> 'watch', 'tries' -> 'try'. Good enough for
+    the GM's plain present-tense event text."""
+    v = verb.lower()
+    if v in _IRREGULAR:
+        return _IRREGULAR[v]
+    if v.endswith("ies") and len(v) > 4:
+        return verb[:-3] + "y"
+    if v.endswith(("ches", "shes", "sses", "xes", "zes", "oes")):
+        return verb[:-2]
+    if v.endswith("s") and not v.endswith("ss"):
+        return verb[:-1]
+    return verb
+
+
 def render(state, observer, text):
     """Replace {id} placeholders with how this observer knows each person."""
     def sub(m):
-        aid = m.group(1)
+        aid, possessive = m.group(1), m.group(2)
         if aid == observer:
-            return "I" if m.start() == 0 else "me"
+            if possessive:
+                return "my"
+            # Subject at the start of a sentence: marked so the verb can be fixed.
+            before = text[:m.start()].rstrip()
+            return "\0I" if not before or before[-1] in ".!?;" else "me"
         if aid == S.PLAYER or aid in state["chars"]:
-            return S.name_for(state, observer, aid)
+            return S.name_for(state, observer, aid) + (possessive or "")
         return m.group(0)
-    out = re.sub(r"\{(\w+)\}", sub, text)
+    out = re.sub(r"\{(\w+)\}('s)?", sub, text)
+    out = re.sub(r"\0I (\w+)", lambda m: "I " + _first_person(m.group(1)), out).replace("\0", "")
     return out[0].upper() + out[1:] if out else out
 
 
@@ -122,13 +145,28 @@ def apply(state, event, rng):
     imp = event.get("importance", 3)
     # The actor remembers doing it, in first person if the event provides that.
     if event["actor"] in S.all_ids(state):
-        own = event.get("actor_text") or "I did this: " + render(state, None, event["text"])
+        own = event.get("actor_text") or "I did this: " + render(state, event["actor"], event["text"])
         perceptions_with_self = {event["actor"]: own, **perceptions}
     else:
         perceptions_with_self = perceptions
     for obs, line in perceptions_with_self.items():
         S.actor(state, obs).setdefault("memory", []).append(
             {"t": clock["turn"], "time": clock["time"], "text": line, "importance": imp})
+    state["log"].append({"turn": clock["turn"], "time": clock["time"], "event": event,
+                         "perceived_by": perceptions, "checks": checks})
+    return perceptions, checks
+
+
+def arrive(state, aid, from_room, rng):
+    """Move has already happened: let the new room notice the arrival. The
+    mover gets no memory line; their departure event covers it."""
+    clock = state["world"]["clock"]
+    event = {"actor": aid, "room": S.location(state, aid),
+             "text": f"{{{aid}}} comes in from the {from_room}.", "volume": "silent", "subtle": False}
+    perceptions, checks = perceive(state, event, rng)
+    for obs, line in perceptions.items():
+        S.actor(state, obs).setdefault("memory", []).append(
+            {"t": clock["turn"], "time": clock["time"], "text": line, "importance": 3})
     state["log"].append({"turn": clock["turn"], "time": clock["time"], "event": event,
                          "perceived_by": perceptions, "checks": checks})
     return perceptions, checks

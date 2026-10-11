@@ -98,6 +98,27 @@ def door_between(state, a, b):
     return doors.get(f"{a}-{b}") or doors.get(f"{b}-{a}")
 
 
+def door_rooms(door_id):
+    return door_id.split("-", 1)
+
+
+def object_room(state, oid):
+    """The room an object is in, following holders ("aldric") and hiding
+    places ("behind loose_stone")."""
+    loc = state["world"]["objects"][oid]["location"]
+    if loc in state["world"]["rooms"]:
+        return loc
+    if loc == PLAYER or loc in state["chars"]:
+        return location(state, loc)
+    if loc.startswith("behind "):
+        return object_room(state, loc[len("behind "):])
+    return None
+
+
+def carrying(state, aid):
+    return [oid for oid, o in state["world"]["objects"].items() if o["location"] == aid]
+
+
 def stat(state, aid, ability):
     if aid == PLAYER:
         return state["world"]["player"].get("stats", {}).get(ability, 10)

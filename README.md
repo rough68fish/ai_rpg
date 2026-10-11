@@ -1,74 +1,116 @@
 # Church scene prototype
 
+A text-only RPG scene for testing character agents: one small church, a traveller (you), three AI-driven characters and two the GM runs, all on one local model through Ollama. Each character knows only what it has perceived; the GM sees everything and Python rolls every die.
+
 Design: [framework.md](framework.md). Prompts: [prompts.md](prompts.md).
 
-## Stage 1 (built): state, map, perception, debug REPL
+## Quick start
 
-No dependencies beyond Python 3.10+. Run from this folder:
+Needs Python 3.10+ (no packages) and, for the model commands, [Ollama](https://ollama.com) running locally with a model pulled.
 
 ```
-python play.py            # random dice
-python play.py --seed 3   # repeatable dice
+python play.py                          # random dice, default model gemma4:26b
+python play.py --seed 3                 # repeatable dice
+python play.py --model gemma4:26b       # or set RPG_MODEL; --ollama / OLLAMA_URL for the server
 python play.py --resume runs/<run>/turn_004.json
+python replay.py                        # view the latest run as a chat
 ```
 
-You play the traveller (plain text = you speak) and puppet everyone else with commands. `/help` lists them. A tour that exercises the rules:
+Plain text means the traveller speaks. Everything else is a `/command`. The commands that don't call the model (`/say`, `/do`, `/move`, `/mind` and the rest) work without Ollama.
+
+A short session using the model:
 
 ```
 /move player nave
-Hello? Is anyone here?
-/say martha @player Oh hello dear, are you here for mass?
-/say tomas loud Pip! Have you lit the candles yet?      # Pip hears it through the wall
-/do tomas subtle {tomas} slips the parish register under his arm   # Aldric rolls WIS to notice
-/move tomas crypt                                     # locked
-/next
-/mind martha       # what she thinks happened (her hearing rolls can fail)
-/prompt pip        # the exact prompt /act sends, plus a leakage check
-/log
-/truth
+/move player sanctuary
+/move player sacristy
+/try I ask the old priest straight out where the relic of St. Aurel is kept
+/act aldric        # he answers, or deflects
+/act tomas         # Tomas reacts to what he overheard
+/resolve           # their actions, plus Agnes and Martha
+/next              # advance one minute and save
+/try I quietly try to lift the key from around the old priest's neck
+/truth             # did the key move?
+/quit
 ```
 
-Every `/next` saves a snapshot to `runs/<timestamp>/`, so you can diff turns or resume one.
+Then `python replay.py` to read it back.
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| *plain text* | The traveller says it out loud (normal volume). |
+| `/try <text>` | The traveller attempts something; the GM resolves it (model). |
+| `/act <who>` | Sends that character's prompt to the model. Speech is spoken at once; the action becomes a pending intent. |
+| `/resolve` | The GM resolves all pending intents and ticks the managed characters (model). |
+| `/pending` | Intents waiting for `/resolve`. |
+| `/say <who> [whisper\|loud] [@target] <words>` | Puppet someone's speech by hand. |
+| `/do <who> [subtle] [loud] [@target] <text>` | Puppet an action; write people as `{id}`, e.g. `{pip} drops a candle`. |
+| `/move <who> <room>` | Move to an adjacent room; locked doors stop you. |
+| `/next` | Advance the clock one turn (one minute) and save a snapshot. |
+| `/look [who]`, `/who` | A room as someone sees it; everyone's location and mode. |
+| `/mind <who>` | Memory, beliefs and goals: what they *think*. |
+| `/truth` | Ground truth, objects and doors: what *is*. |
+| `/log [n]` | Last n events with perception rolls, GM checks and state changes. |
+| `/prompt <who>` | The exact prompt `/act` would send, with the leakage check. |
+| `/roll <who> <STAT> [mod]` | Roll d20 under a stat by hand. |
+| `/know <who> <whom>` | `<who>` learns `<whom>`'s name. |
+| `/promote <who>`, `/demote <who>` | Switch between agent and GM-managed. |
+| `/save`, `/help`, `/quit` | |
+
+## Replays
+
+Every `/next` (and `/quit`) saves the full state to `runs/<timestamp>/turn_NNN.json`, so you can diff turns or resume from one. `runs/` is git-ignored.
+
+```
+python replay.py                          # latest run, opens in the browser
+python replay.py runs/20261010-215635     # a run folder
+python replay.py runs/<run>/turn_002.json -o out.html --no-open
+```
+
+`replay.py` writes `replay.html` into the run folder: a chat view of what the traveller experienced. The traveller's speech and actions are on the right. What they heard and saw is on the left, captioned with how they know the speaker. Turn dividers and room descriptions mark time and place. Toggles show the dice rolls and, as faded bubbles, the events the traveller didn't perceive.
 
 ## Layout
 
 ```
 play.py              entry point
-rpg/state.py         load/save, lookups, d20 roll-under
-rpg/perception.py    who perceives an event, writes it into their memory
-rpg/prompts.py       builds character prompts from their own record, leakage check
+replay.py            a run as a chat-style HTML page
+rpg/state.py         load/save, lookups, objects, d20 roll-under
+rpg/perception.py    who perceives an event, first-person rendering, memory writes
+rpg/prompts.py       character prompts from their own record, leakage check
 rpg/llm.py           Ollama /api/chat client (schema-constrained JSON replies)
-rpg/repl.py          the debug REPL
+rpg/gm.py            GM resolve: prompt, branch-and-roll, validated state changes
+rpg/repl.py          the REPL
 scene/               starting state (world.json, characters/*.json)
+framework.md         design: scene, perception rules, turn loop
+prompts.md           GM and character prompts with schemas
 ```
 
-## Stage 2 (built): character calls
+## How it works
 
-Needs [Ollama](https://ollama.com) running locally with the model pulled. Default model is `gemma4:26b`; change it with `--model` or the `RPG_MODEL` environment variable, and the server with `--ollama` or `OLLAMA_URL`.
+**Perception (code, no model).** Same room: you see actions and hear normal speech. Adjacent room: only loud speech and noises. Whispers reach the target; others need a WIS check. Subtle actions need a WIS check to notice. Martha's poor hearing adds a penalty to every hearing roll. Each perceiver gets a first-person line in their memory, naming people the way they know them ("a travel-worn stranger" until introduced).
 
-```
-python play.py --model gemma4:26b
-```
+**Characters (`/act`).** A character's prompt holds only its own record and memories, never stats, world truth or other characters' secrets. The leakage check blocks the call if any of those slip in. The reply is constrained to a JSON schema. `speech` is spoken straight away; the free-text `target` ("Father Tomas", "the stranger") is matched to an id. `action` waits for the GM. `thought` and `mood` go into the character's memory, and belief and goal edits are applied. "What just happened" is every memory added since the character's last `/act`.
 
-`/act <who>` sends that character's prompt (the one `/prompt` shows) to the model, after the leakage check passes. From the reply:
+**GM (`/try`, `/resolve`).** The GM sees everything. For anything uncertain it names a check and writes both a success and a failure branch; Python rolls d20 under ability + modifier, keeps one branch, runs perception on it, then applies its `state_changes`. Each change (`move`, `give`, `drop`, `unlock`/`lock`, `reveal`, `know`) is validated against the world, e.g. the crypt door only unlocks for whoever holds the key, and anything invalid is rejected and logged. Names the GM writes out are turned back into `{id}` so observers still only see names they know.
 
-- `speech` is spoken straight away as an event, so others perceive it by the normal rules. The model's free-text `target` ("Father Tomas", "the stranger") is matched to an id.
-- `action` is stored as a pending intent (`/pending`). Nothing resolves it until the GM in stage 3.
-- `thought` and `mood` go into the character's own memory; belief and goal edits are applied to the record.
+**Model settings.** `think: false` on every call: with thinking on, Gemma 4 spent about 900 hidden tokens per call. Temperature is 0.8 for characters, 0.4 for the GM, with `num_ctx` 8192 and `keep_alive` 30m. Once the model is loaded, a character call takes about 1.5 s and a GM call 2–8 s.
 
-A character's "What just happened" is every memory added since its last `/act` (tracked by `memories_seen` in its record).
+## Status
 
-Calls use `think: false`, which matters for thinking models such as Gemma 4: with thinking on, a call spent ~900 hidden tokens; with it off, ~120 tokens and about 1.5 s once the model is loaded.
+| Stage | | |
+|---|---|---|
+| 1 | built | State, map, perception, debug REPL |
+| 2 | built | Character calls (`/act`) |
+| 3 | built | GM `resolve` with branch-and-roll (`/try`, `/resolve`), replay viewer |
+| 4 | next | `/turn`: the full loop with all agents plus GM `narrate`, skipping agents with nothing new to react to |
+| 5 | | Managed characters, promotion and demotion with memory summaries |
 
-```
-/move player sanctuary
-Good morning. I heard this church has an old relic. Is that true?
-/act pip           # Pip answers the stranger, in his voice
-/act tomas         # Tomas is in the sacristy and didn't hear it
-/pending
-/mind pip
-```
+Known rough edges:
 
-## Next: stage 3
-
-GM `resolve` with branch-and-roll: turn pending intents into events, with Python rolling the checks (see framework.md, Turn loop).
+- The GM sometimes still writes another agent's reaction into an event ("...but {aldric} reacts with suspicion"), and occasionally calls for a check on plain talking.
+- Introductions don't rename the traveller: telling Pip "I'm Will" is just speech, and nobody calls the traveller Will afterwards.
+- First-person rewriting only handles a sentence-initial subject; "...but me reacts" can still appear.
+- A subtle success still gets perception rolls, so the victim of a successful pickpocket can notice it anyway.
+- The default model is `gemma4:26b`; framework.md was planned around Gemma 4 31B.

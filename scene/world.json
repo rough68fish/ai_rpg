@@ -42,7 +42,7 @@
   "doors": {
     "sacristy-crypt": {
       "locked": true,
-      "key_holder": "aldric",
+      "key": "crypt_key",
       "noise": "the hinges squeal loudly"
     }
   },

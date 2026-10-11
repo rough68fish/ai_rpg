@@ -1,6 +1,6 @@
 # Church scene prototype: framework
 
-A text-only prototype of one scene, built to test the character-agent design in `../design/character-agents.md` before anything bigger. Python, the Ollama HTTP API, JSON files for state, one shared local model for every role.
+A text-only prototype of one scene, built to test the character-agent design (in a separate design doc, not in this repo) before anything bigger. Python, the Ollama HTTP API, JSON files for state, one shared local model for every role.
 
 Prompts are in [prompts.md](prompts.md). Starting state is in `scene/`.
 
@@ -38,7 +38,7 @@ Martha's hearing is a trait plus a penalty the engine applies to her hearing che
 ## Files
 
 ```
-prototype/
+ai_rpg/
   framework.md        this file
   prompts.md          GM and character prompts
   scene/

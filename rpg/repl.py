@@ -4,6 +4,7 @@ import json
 import shlex
 import textwrap
 
+from . import gm
 from . import llm
 from . import perception as P
 from . import prompts
@@ -28,7 +29,9 @@ Plain text            the traveller says it out loud (normal volume)
 /prompt <who>         the character prompt that would be sent, with leakage check
 /act <who>            send that prompt to the model: speech is spoken, the
                       action is kept as a pending intent
-/pending              intents waiting for the GM (stage 3)
+/pending              intents waiting for the GM
+/resolve              GM resolves all pending intents (checks, rolls, state changes)
+/try <text>           the traveller attempts something; the GM resolves it
 /know <who> <whom>    <who> learns <whom>'s name
 /promote <who>, /demote <who>   switch agent / managed
 /save                 save a snapshot now
@@ -50,14 +53,17 @@ class Game:
         raise ValueError(f"unknown character '{who}'")
 
     def _emit(self, event):
-        perceptions, checks = P.apply(self.state, event, self.rng)
+        self._show(*P.apply(self.state, event, self.rng))
+
+    @staticmethod
+    def _show(perceptions, checks, quiet=False):
         for c in checks:
             mark = "ok" if c["success"] else "miss"
             print(f"  [roll] {c['actor']} {c['ability']} {c.get('why', '')}: "
                   f"{c['roll']} vs {c['target']} {mark}")
         for obs, line in perceptions.items():
             print(f"  -> {obs}: {line}")
-        if not perceptions:
+        if not perceptions and not quiet:
             print("  -> nobody else perceived it")
 
     @staticmethod
@@ -125,14 +131,7 @@ class Game:
                     "actor_text": f"I went from the {here} to the {room}.", "volume": "silent", "subtle": False})
         S.actor(self.state, aid)["location"] = room
         self.state["log"][-1]["moved"] = [aid, here, room]
-        perceptions, _ = P.perceive(self.state, {"actor": aid, "room": room,
-                                    "text": f"{{{aid}}} comes in from the {here}.",
-                                    "volume": "silent", "subtle": False}, self.rng)
-        clock = self.state["world"]["clock"]
-        for obs, line in perceptions.items():
-            S.actor(self.state, obs)["memory"].append(
-                {"t": clock["turn"], "time": clock["time"], "text": line, "importance": 3})
-            print(f"  -> {obs}: {line}")
+        self._show(*P.arrive(self.state, aid, here, self.rng), quiet=True)
 
     def next_turn(self):
         clock = self.state["world"]["clock"]
@@ -188,8 +187,14 @@ class Game:
             e = entry["event"]
             print(f"  [{entry['turn']}] {e['actor']} @ {e['room']} ({e.get('volume')}"
                   f"{', subtle' if e.get('subtle') else ''}): {e['text']} {e.get('speech') or ''}")
+            if entry.get("check"):
+                c = entry["check"]
+                print(f"      GM check {c['actor']} {c['ability']} {c['modifier']:+d}: "
+                      f"{c['roll']} vs {c['target']}, {entry['branch']}")
             for c in entry["checks"]:
                 print(f"      roll {c['actor']} {c['ability']}: {c['roll']} vs {c['target']}")
+            for ch in entry.get("state_changes", []):
+                print(f"      change {ch['cmd']}: {'ok' if ch['ok'] else 'rejected'} ({ch['msg']})")
             print(f"      perceived by: {', '.join(entry['perceived_by']) or 'nobody'}")
 
     def prompt(self, who):
@@ -262,7 +267,7 @@ class Game:
             print(f"  says ({reply.get('volume', 'normal')}): {reply['speech']}")
             self._speak(cid, reply["speech"], reply.get("volume") or "normal", tid)
         if reply.get("action"):
-            print(f"  tries:   {reply['action']}  [pending, unresolved until the GM exists]")
+            print(f"  tries:   {reply['action']}  [pending: /resolve]")
             self.state.setdefault("pending", []).append(
                 {"turn": clock["turn"], "actor": cid, "action": reply["action"],
                  "target": tid, "target_text": reply.get("target")})
@@ -283,6 +288,50 @@ class Game:
             if line not in items:
                 items.append(line)
                 print(f"  {key} +: {line}")
+
+    def _gm(self, intents, tick=()):
+        try:
+            reports, stats = gm.resolve(self.state, intents, self.llm, self.rng, tick)
+        except llm.LLMError as e:
+            print(f"  {e}")
+            return False
+        print(f"  (GM {stats['seconds']}s, {stats['prompt_tokens']} in / {stats['reply_tokens']} out,"
+              f" {len(reports)} events)")
+        for r in reports:
+            e = r["event"]
+            print(f"  * {r['actor']} @ {e['room']} ({e['volume']}{', subtle' if e['subtle'] else ''})")
+            c = r["check"]
+            if c:
+                print(f"    check {c['ability']} {c['modifier']:+d} ({c['why']}): "
+                      f"d20 = {c['roll']} vs {c['target']}, {r['branch'].upper()}")
+            print(f"    {e['text']}" + (f' "{e["speech"]}"' if e["speech"] else ""))
+            if c and r.get("other"):
+                print(f"    (other branch: {r['other']})")
+            if r.get("note"):
+                print(f"    ({r['note']})")
+            self._show(r["perceptions"], r["checks"])
+            for ch in r["changes"]:
+                print(f"    change: {ch['cmd']} -> {'ok' if ch['ok'] else 'REJECTED'}: {ch['msg']}")
+                if ch["arrival"]:
+                    self._show(*ch["arrival"], quiet=True)
+        return True
+
+    def try_(self, text):
+        """The traveller attempts something; the GM decides what happens."""
+        if not text:
+            print("  /try <what you do>")
+            return
+        self._gm([{"actor": S.PLAYER, "action": text}])
+
+    def resolve(self):
+        intents = self.state.get("pending", [])
+        if not intents:
+            print("  no pending intents; /act someone first")
+            return
+        # framework.md, turn loop step 6: managed characters tick in the same call.
+        tick = [cid for cid, rec in self.state["chars"].items() if rec["mode"] == "managed"]
+        if self._gm(intents, tick):
+            self.state["pending"] = []
 
     def pending(self):
         for p in self.state.get("pending", []):
@@ -308,8 +357,12 @@ class Game:
         if not line.startswith("/"):
             self.say("player", line.split())
             return True
-        parts = shlex.split(line[1:]) if '"' in line else line[1:].split()
+        try:
+            parts = shlex.split(line[1:]) if '"' in line else line[1:].split()
+        except ValueError:  # unbalanced quotes, e.g. an apostrophe
+            parts = line[1:].split()
         cmd, args = parts[0].lower(), parts[1:]
+        rest = line[1:].split(None, 1)[1] if len(parts) > 1 else ""
         table = {
             "say": lambda: self.say(args[0], args[1:]),
             "do": lambda: self.do(args[0], args[1:]),
@@ -324,6 +377,8 @@ class Game:
             "prompt": lambda: self.prompt(*args),
             "act": lambda: self.act(*args),
             "pending": self.pending,
+            "try": lambda: self.try_(rest),
+            "resolve": self.resolve,
             "know": lambda: self.know(*args),
             "promote": lambda: self.set_mode(args[0], "agent"),
             "demote": lambda: self.set_mode(args[0], "managed"),
