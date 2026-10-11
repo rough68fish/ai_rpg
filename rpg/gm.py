@@ -279,9 +279,15 @@ def _implied_target(state, actor, out, speech):
 
 
 def _event(state, actor, out):
-    room = out.get("room")
-    if room not in state["world"]["rooms"]:
-        room = S.location(state, actor) if actor != WORLD else state["world"]["player"]["location"]
+    # A person acts where they are, whatever room the GM wrote (the keeper on the
+    # stairs can't block a doorway in the kitchen). Only nobody's events, like a
+    # bell, take the GM's room.
+    if actor != WORLD:
+        room = S.location(state, actor)
+    else:
+        room = out.get("room")
+        if room not in state["world"]["rooms"]:
+            room = state["world"]["player"]["location"]
     speech = out.get("speech") or None
     text = out.get("text", "")
     if not speech:
@@ -422,6 +428,20 @@ def apply_change(state, actor, cmd, rng, event=None):
 
 # --- running a resolve call ---------------------------------------------------
 
+def _drop_echo(out, said):
+    """A later traveller event that repeats words from their own line (the GM
+    split one line into two events): keep the action, drop the repeat."""
+    out = dict(out)
+    flat_said = _flat(said)
+    if out.get("speech") and _flat(out["speech"]) in flat_said:
+        out["speech"] = None
+    out["text"] = re.sub(r'["“]([^"”]*)["”]',
+                         lambda m: "" if _flat(m.group(1)) in flat_said else m.group(0), out.get("text", ""))
+    if out.get("actor_text") and _flat(out["actor_text"]) in flat_said:
+        out["actor_text"] = None
+    return out
+
+
 def _flat(text):
     """Letters and digits only, for comparing wordings."""
     return re.sub(r"\W", "", text.lower())
@@ -532,16 +552,34 @@ def resolve(state, intents, client, rng, tick=()):
             "text": "{player} says:", "room": S.location(state, S.PLAYER), "volume": "normal",
             "subtle": False, "actor_text": ""}})
     goes = next((it["goes_to"] for it in intents if it["actor"] == S.PLAYER and it.get("goes_to")), None)
+    said = says
     reports = []
-    for raw in events:
+    player_idx = [i for i, e in enumerate(events) if _to_id(state, e.get("actor")) == S.PLAYER]
+    last_player = player_idx[-1] if player_idx else -1
+    for i, raw in enumerate(events):
         first_player = says and _to_id(state, raw.get("actor")) == S.PLAYER
+        if said and not first_player and _to_id(state, raw.get("actor")) == S.PLAYER:
+            for key in ("success", "failure"):
+                if raw.get(key):
+                    raw[key] = _drop_echo(raw[key], said)
         reports.append(play_event(state, raw, rng, *((says, volume, bool(goes)) if first_player else ())))
         if first_player:
             says = None
+        if i == last_player:
+            # The traveller's move and words land before anyone else acts.
+            _finish_player(state, reports, goes, rng)
+    if last_player < 0:
+        _finish_player(state, reports, goes, rng)
+    return reports, stats
+
+
+def _finish_player(state, reports, goes, rng):
+    """After the traveller's own events: make sure they got where they were going
+    (the GM may only have narrated the walk), then say any words held back for
+    the arrival."""
     moved = any(c["ok"] and c["cmd"].lower().startswith("move player")
                 for r in reports for c in r["changes"])
     if goes and not moved and S.location(state, S.PLAYER) != goes:
-        # The GM described the walk but didn't move anyone; the traveller still went.
         mine = next((r for r in reports if r["actor"] == S.PLAYER), None)
         ok, msg, arrival = apply_change(state, S.PLAYER, f"move player {goes}", rng)
         change = {"cmd": f"move player {goes}", "ok": ok, "msg": msg + " (from the typed line)",
@@ -556,7 +594,6 @@ def resolve(state, intents, client, rng, tick=()):
     later = next((r.pop("deferred") for r in reports if r.get("deferred")), None)
     if later:
         reports.append(_say_on_arrival(state, later, rng))
-    return reports, stats
 
 
 def _say_on_arrival(state, said, rng):

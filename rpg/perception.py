@@ -139,17 +139,32 @@ def perceive(state, event, rng):
     return perceptions, checks
 
 
+_SPEECH_TAG = re.compile(r"\{\w+\} [\w ]+?( to \{\w+\})?:?\s*")
+
+
+def own_memory(state, event):
+    """What the actor remembers of their own event. The outcome text is the
+    truth of what happened (the GM's actor_text tends to say only what they
+    tried), so it is put in first person, with their words after it."""
+    text, speech = event.get("text", "").strip(), event.get("speech")
+    if not text or _SPEECH_TAG.fullmatch(text) and len(text.split()) <= 5:
+        # Just "{x} says to {y}:" - the words are the memory, or there is none.
+        if not speech:
+            return None
+        return event.get("actor_text") or f'I said: "{speech}"'
+    own = render(state, event["actor"], text).rstrip(":").rstrip()
+    if speech and speech not in own:
+        own += f' I said: "{speech}"'
+    return own
+
+
 def apply(state, event, rng):
     """Perceive an event, write it into every perceiver's memory, and log it."""
     clock = state["world"]["clock"]
     perceptions, checks = perceive(state, event, rng)
     imp = event.get("importance", 3)
-    # The actor remembers doing it, in first person if the event provides that.
-    if event["actor"] in S.all_ids(state):
-        own = event.get("actor_text") or "I did this: " + render(state, event["actor"], event["text"])
-        perceptions_with_self = {event["actor"]: own, **perceptions}
-    else:
-        perceptions_with_self = perceptions
+    own = own_memory(state, event) if event["actor"] in S.all_ids(state) else None
+    perceptions_with_self = {event["actor"]: own, **perceptions} if own else perceptions
     for obs, line in perceptions_with_self.items():
         S.actor(state, obs).setdefault("memory", []).append(
             {"t": clock["turn"], "time": clock["time"], "text": line, "importance": imp,
