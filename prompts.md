@@ -246,7 +246,7 @@ What you want right now:
 {goals}
 
 What you remember (oldest first):
-{memory, most important + most recent, max ~15 lines}
+{memory: the last 6 turns in full, plus the most important older turns kept whole, max ~20 older lines}
 
 What just happened:
 {new perceptions since last turn, first person}
