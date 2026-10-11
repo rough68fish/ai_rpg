@@ -98,6 +98,26 @@ def door_between(state, a, b):
     return doors.get(f"{a}-{b}") or doors.get(f"{b}-{a}")
 
 
+def path(state, start, goal):
+    """Rooms walked through from start to goal (excluding start), avoiding
+    locked doors; None if there is no way."""
+    prev, frontier = {start: None}, [start]
+    while frontier:
+        room = frontier.pop(0)
+        if room == goal:
+            steps = []
+            while room != start:
+                steps.append(room)
+                room = prev[room]
+            return steps[::-1]
+        for nxt in adjacent(state, room):
+            door = door_between(state, room, nxt)
+            if nxt not in prev and not (door and door.get("locked")):
+                prev[nxt] = room
+                frontier.append(nxt)
+    return None
+
+
 def door_rooms(door_id):
     return door_id.split("-", 1)
 

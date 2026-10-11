@@ -105,13 +105,22 @@ prompts.md           GM and character prompts with schemas
 
 **Perception (code, no model).** Same room: you see actions and hear normal speech. Adjacent room: only loud speech and noises. Whispers reach the target; others need a WIS check. Subtle actions need a WIS check to notice. Martha's poor hearing adds a penalty to every hearing roll. Each perceiver gets a first-person line in their memory, naming people the way they know them ("a travel-worn stranger" until introduced).
 
-**Characters (`/act`).** A character's prompt holds only its own record and memories, never stats, world truth or other characters' secrets. The leakage check blocks the call if any of those slip in. The reply is constrained to a JSON schema. `speech` is spoken straight away; the free-text `target` ("Father Tomas", "the stranger") is matched to an id. `action` waits for the GM. `thought` and `mood` go into the character's memory, and belief and goal edits are applied. "What just happened" is every memory added since the character's last `/act`.
+**Characters (`/act`).** A character's prompt holds only its own record and memories, never stats, world truth or other characters' secrets. The leakage check blocks the call if any of those slip in. The reply is constrained to a JSON schema. `speech` is spoken straight away; the free-text `target` ("Father Tomas", "the stranger") is matched to an id. `action` waits for the GM. `thought` and `mood` go into the character's memory, and belief and goal edits are applied.
 
-**GM (`/try`, `/resolve`).** The GM sees everything. For anything uncertain it names a check and writes both a success and a failure branch; Python rolls d20 under ability + modifier, keeps one branch, runs perception on it, then applies its `state_changes`. Each change (`move`, `give`, `drop`, `unlock`/`lock`, `reveal`, `know`) is validated against the world, e.g. the crypt door only unlocks for whoever holds the key, and anything invalid is rejected and logged. Names the GM writes out are turned back into `{id}` so observers still only see names they know.
+Characters are told to answer the person who actually spoke to them, and that a description ("a travel-worn stranger (name unknown)") isn't a name. In testing, Tomas sometimes answered the stranger's news by talking to Pip, the only named person in the room. After one slip he went on believing Pip had told him. So if someone just spoke to a character and the reply goes to a different person who said and did nothing new, the character is asked once more with a short note, and the second answer is kept. Replaying that turn, the prompt rule alone took the rate of answering Pip from 2/20 to 0/30. The re-ask is a backstop for when a slip does happen. "What just happened" is every memory added since the character's last `/act`.
+
+**GM (`/try`, `/resolve`).** The GM sees everything. For anything uncertain it names a check and writes both a success and a failure branch; Python rolls d20 under ability + modifier, keeps one branch, runs perception on it, then applies its `state_changes`. Each change (`move`, `give`, `drop`, `unlock`/`lock`, `reveal`, `know`) is validated against the world, and anything invalid is rejected and logged:
+
+- The crypt door only unlocks for whoever holds the key.
+- A move follows the shortest path through unlocked doors, and whoever is in each room on the way sees the mover come in.
+- Only the traveller's own actions can move the traveller.
+- If the traveller's move fails, they remember that it failed, so the narration can't walk them somewhere they never got.
+
+Objects marked `concealed` (Aldric's key under his cassock) are flagged to the GM as out of sight. Names the GM writes out are turned back into `{id}` so observers still only see names they know.
 
 **A turn (plain text or `/turn`).** These are the steps of the turn loop in framework.md:
 
-1. The GM resolves what the traveller typed. Any GM-managed character the traveller's action targets or names, and who perceived it, is promoted to an agent (see below).
+1. A small call splits the typed line into what the traveller *does* and *says*. Then the GM resolves it. The traveller's words always reach the event's `speech` exactly as split, even if the GM rewords them or describes them as a nod. Speaking can't fail; what it achieves can. Any GM-managed character the traveller's action targets or names, and who perceived it, is promoted to an agent (see below).
 2. Every agent with news acts, one after another. News means it perceived something from someone else since it last acted, and an agent with no news still acts every 3rd turn. Agents in the traveller's room go first, so a reply can answer what was just said.
 3. The GM resolves their actions and ticks Agnes and Martha in the same call. A managed character who was spoken to replies.
 4. Agents with no contact with the traveller for 5 turns are demoted to GM-managed. Contact runs both ways: they perceived the traveller, or the traveller perceived them.

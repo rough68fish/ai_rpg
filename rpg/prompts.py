@@ -15,6 +15,9 @@ RULES = """Rules:
   the world will tell you what happened.
 - Speak the way you would really speak. Keep speech short: one to three
   sentences, the way people talk while they are busy.
+- Keep track of who said what. Answer the person who actually spoke to you,
+  and call people only by names you know. Someone whose name you don't know
+  is "the stranger" or how they look; never give them another person's name.
 - You may choose to do nothing, keep working, or stay silent.
 - "thought" is private. No one else ever sees it. Be honest there.
 - Answer only with JSON in the requested format.
@@ -84,7 +87,8 @@ def user_message(state, cid):
     memories = rec.get("memory", [])
     seen = seen_count(rec)
     old, new = _select_memories(memories[:seen]), memories[seen:]
-    visible = [S.name_for(state, cid, o) for o in S.in_room(state, room) if o != cid]
+    visible = [S.name_for(state, cid, o) + ("" if S.knows(state, cid, o) else " (name unknown)")
+               for o in S.in_room(state, room) if o != cid]
     return f"""It is {world['clock']['time']}. Mass is at {world['clock']['mass_at']}.
 You are in the {room}: {world['rooms'][room]['desc']}
 You can see: {', '.join(visible) if visible else 'nobody'}.

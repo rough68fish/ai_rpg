@@ -237,6 +237,25 @@ class Game:
             return S.PLAYER
         return None
 
+    def _misaddressed(self, cid, new, reply):
+        """If someone just spoke to this character but the reply goes to a person
+        who said and did nothing new, return a note for a second try."""
+        speaker = None
+        for m in reversed(new):  # perception lines read 'X says to me: "..."'
+            by = m.get("by")
+            if by and by not in (cid, "summary") and '"' in m["text"] \
+                    and " me" in m["text"].split('"')[0]:
+                speaker = by
+                break
+        tid = self._target_id(cid, reply.get("target"))
+        if not speaker or not tid or tid == speaker or any(m.get("by") == tid for m in new):
+            return None
+        them = S.name_for(self.state, cid, speaker)
+        other = S.name_for(self.state, cid, tid)
+        return (f"the last person who spoke to you was {them}, but your reply is aimed at "
+                f"{other}. That is fine if you deliberately turn to {other}; if you meant to "
+                f"answer {them}, address {them}.")
+
     def act(self, who):
         """Send this character's prompt to the model and play out the reply.
 
@@ -256,8 +275,16 @@ class Game:
         if problems:
             print("  not sent, LEAKAGE: " + "; ".join(problems))
             return
+        new = rec.get("memory", [])[prompts.seen_count(rec):]
         try:
             reply, stats = self.llm.chat(sysm, user, prompts.CHARACTER_SCHEMA, llm.TEMP_CHARACTER)
+            note = self._misaddressed(cid, new, reply)
+            if note:
+                # One slip snowballs: the wrong name lands in memory and the next
+                # turn builds on it. Ask once more; keep the second answer.
+                print(f"  (re-asked: {note})")
+                reply, stats = self.llm.chat(sysm, user + "\n\nCheck before answering: " + note,
+                                             prompts.CHARACTER_SCHEMA, llm.TEMP_CHARACTER)
         except llm.LLMError as e:
             print(f"  {cid}: {e}", file=sys.stderr)
             return
@@ -334,8 +361,18 @@ class Game:
             print("  /try <what you do>")
             return
         log_from = len(self.state["log"])
-        if self._gm([{"actor": S.PLAYER, "action": text}]):
+        if self._gm([self._player_intent(text)]):
             self._promote_engaged(log_from)
+
+    def _player_intent(self, text):
+        """The typed line, split into what the traveller does and says."""
+        try:
+            does, says = gm.split_line(text, self.llm)
+        except llm.LLMError as e:
+            print(f"  split: {e}", file=sys.stderr)
+            does = says = None
+        print(f"  split: does={does!r} says={says!r}")
+        return {"actor": S.PLAYER, "action": text, "does": does, "says": says}
 
     def resolve(self):
         intents = self.state.get("pending", [])
@@ -400,7 +437,7 @@ class Game:
             if text:
                 step("the GM resolves what you do")
                 print(f"\n== you: {text}")
-                self._gm([{"actor": S.PLAYER, "action": text}])
+                self._gm([self._player_intent(text)])
                 # Step 4: anyone the traveller engaged comes alive before acting.
                 for note in self._promote_engaged(log_from):
                     step(note)

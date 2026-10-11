@@ -64,9 +64,15 @@ they know. Return events, usually one per intent.
   intent includes speaking, put the actor's exact words in "speech" and the
   person spoken to in "target". Do not write how other agents react or what
   they say back: they decide that themselves on their own turn.
-- Talking, asking, looking around and walking somewhere need no check. Save
-  checks for things that can really go wrong: lying, sneaking, stealing,
-  forcing, searching, persuading someone against their interest.
+- The traveller's typed line is something they do, something they say, or
+  both. A line with no verb like "I walk" or "I try" is usually just words
+  spoken aloud. Put any words they say in "speech", as close to how they
+  typed them as you can. A description such as "nods" never replaces what
+  the traveller says.
+- Talking, asking, answering, agreeing, looking around and walking somewhere
+  need no check. Save checks for things that can really go wrong: lying,
+  sneaking, stealing, forcing, searching, persuading someone against their
+  interest.
 - Speech in RECENT EVENTS has already been said; do not repeat it.
 - "actor_text" is the actor's own first-person memory of what happened.
 
@@ -154,6 +160,9 @@ def resolve_message(state, intents, tick=()):
     objects = []
     for oid, o in w["objects"].items():
         extra = " HIDDEN" if o.get("hidden") else ""
+        if o.get("concealed"):
+            extra += " CONCEALED (worn out of sight: nobody else can see it, so no event mentions it" \
+                     " unless an event this turn actually exposes it)"
         if o.get("find"):
             extra += f" (to find: {o['find']})"
         objects.append(f"{oid} @ {o['location']}{extra}: {o['desc']}")
@@ -176,7 +185,12 @@ def resolve_message(state, intents, tick=()):
     lines = []
     for it in intents:
         target = f" (toward: {it['target_text']})" if it.get("target_text") else ""
-        lines.append(f"{it['actor']} (in {S.location(state, it['actor'])}): \"{it['action']}\"{target}")
+        verb = "typed" if it["actor"] == S.PLAYER else "tries"
+        line = f"{it['actor']} (in {S.location(state, it['actor'])}) {verb}: \"{it['action']}\"{target}"
+        if it.get("does") or it.get("says"):  # the traveller's line, already split
+            line += (f"\n  does: {it.get('does') or 'nothing physical'}"
+                     f"\n  says (exact words for \"speech\"): {it.get('says') or 'nothing'}")
+        lines.append(line)
 
     return f"""WORLD STATE
 Time: {w['clock']['time']} (mass at {w['clock']['mass_at']}), turn {turn}
@@ -255,12 +269,24 @@ def _event(state, actor, out):
     if room not in state["world"]["rooms"]:
         room = S.location(state, actor) if actor != WORLD else state["world"]["player"]["location"]
     speech = out.get("speech") or None
+    text = out.get("text", "")
+    if not speech:
+        # Words the GM wrote into the text belong in speech, where perception
+        # (volume, hearing rolls) applies to them.
+        m = re.search(r'["“]([^"”]{2,})["”]', text)
+        if m:
+            speech = m.group(1).strip()
+            text = (text[:m.start()].rstrip(" ,") + text[m.end():]).strip()
+            if not text.endswith((".", ":", "!", "?")):
+                text += ":"
     volume = out.get("volume") if out.get("volume") in VOLUMES else ("normal" if speech else "silent")
+    if speech and volume == "silent":
+        volume = "normal"
     imp = out.get("importance")
     own = out.get("actor_text")
     # The actor's memory names people the way the actor knows them.
     own = P.render(state, actor, _braced(state, own)) if own and actor != WORLD else None
-    return {"actor": actor, "room": room, "text": _braced(state, out.get("text", "")),
+    return {"actor": actor, "room": room, "text": _braced(state, text),
             "speech": speech, "volume": volume, "subtle": bool(out.get("subtle")),
             "target": _to_id(state, out.get("target")) or _implied_target(state, actor, out, speech),
             "actor_text": own,
@@ -298,16 +324,23 @@ def apply_change(state, actor, cmd, rng, event=None):
             who, room = _to_id(state, args[0]), args[1].lower()
             if not who or room not in rooms:
                 return False, "unknown person or room", None
+            if who == S.PLAYER and actor != S.PLAYER:
+                return False, "only the traveller decides where the traveller goes", None
             here = S.location(state, who)
             if room == here:
                 return False, f"{who} is already in the {room}", None
-            if room not in S.adjacent(state, here):
-                return False, f"{room} is not next to {here}", None
-            door = S.door_between(state, here, room)
-            if door and door["locked"]:
-                return False, "the door is locked", None
-            S.actor(state, who)["location"] = room
-            return True, f"{who}: {here} -> {room}", P.arrive(state, who, here, rng)
+            route = S.path(state, here, room)
+            if route is None:
+                return False, f"no way from the {here} to the {room}: the door is locked", None
+            # Walk room by room; whoever is in each room sees them come in.
+            seen, checks, prev = {}, [], here
+            for step in route:
+                S.actor(state, who)["location"] = step
+                p, c = P.arrive(state, who, prev, rng)
+                seen.update(p)
+                checks += c
+                prev = step
+            return True, f"{who}: {' -> '.join([here] + route)}", (seen, checks)
 
         if verb == "give":
             oid, who = args[0], _to_id(state, args[1])
@@ -375,8 +408,15 @@ def apply_change(state, actor, cmd, rng, event=None):
 
 # --- running a resolve call ---------------------------------------------------
 
-def play_event(state, raw, rng):
-    """Roll, keep one branch, perceive it, apply its changes. Returns a report."""
+def _flat(text):
+    """Letters and digits only, for comparing wordings."""
+    return re.sub(r"\W", "", text.lower())
+
+
+def play_event(state, raw, rng, says=None):
+    """Roll, keep one branch, perceive it, apply its changes. Returns a report.
+    `says` is the traveller's own words, which the event carries whatever the
+    GM wrote (speaking can't fail; what it achieves can)."""
     actor = _to_id(state, raw.get("actor")) or WORLD
     report = {"actor": actor, "check": None, "branch": "success", "other": None}
     check = raw.get("check") if isinstance(raw.get("check"), dict) else None
@@ -398,6 +438,26 @@ def play_event(state, raw, rng):
         out, report["other"] = succ, fail.get("text") if fail else None
 
     event = _event(state, actor, out)
+    if says:
+        if not event["speech"]:
+            # The GM's volume described a gesture, not these words.
+            report["note"] = "traveller's words restored"
+            event["volume"] = "normal"
+        elif _flat(event["speech"]) != _flat(says):
+            report["note"] = f"GM's wording replaced: {event['speech']!r}"
+        event["speech"] = says
+        if event["volume"] == "silent":
+            event["volume"] = "normal"
+        # The words now live in "speech"; take any copy out of the text so
+        # listeners don't hear them twice, and make sure the traveller's own
+        # memory has them exactly once.
+        core = says.rstrip(".!? ")
+        at = event["text"].lower().find(core.lower())
+        if core and at >= 0:
+            event["text"] = (event["text"][:at].rstrip(' ,"“') + ":").replace("::", ":")
+        own = event.get("actor_text") or ""
+        if _flat(core) not in _flat(own):
+            event["actor_text"] = (own.rstrip(". ") + f'. I say: "{says}"').lstrip(". ")
     # A move happens where the actor starts; P.arrive covers the new room.
     for cmd in out.get("state_changes") or []:
         p = cmd.split()
@@ -415,6 +475,12 @@ def play_event(state, raw, rng):
     for cmd in out.get("state_changes") or []:
         ok, msg, arrival = apply_change(state, actor, cmd, rng, event)
         report["changes"].append({"cmd": cmd, "ok": ok, "msg": msg, "arrival": arrival})
+        if not ok and actor == S.PLAYER and cmd.lower().startswith("move player"):
+            # Otherwise the narration happily walks the traveller somewhere they never got.
+            clock = state["world"]["clock"]
+            S.actor(state, S.PLAYER)["memory"].append(
+                {"t": clock["turn"], "time": clock["time"], "importance": 4, "by": S.PLAYER,
+                 "text": f"I could not get there ({msg}); I am still in the {S.location(state, S.PLAYER)}."})
     entry["state_changes"] = [{k: c[k] for k in ("cmd", "ok", "msg")} for c in report["changes"]]
     return report
 
@@ -424,7 +490,19 @@ def resolve(state, intents, client, rng, tick=()):
     reply, stats = client.chat(SYSTEM, resolve_message(state, intents, tick),
                                RESOLVE_SCHEMA, llm.TEMP_RESOLVE)
     events = reply.get("events") or []
-    return [play_event(state, raw, rng) for raw in events], stats
+    says = next((it["says"] for it in intents if it["actor"] == S.PLAYER and it.get("says")), None)
+    if says and not any(_to_id(state, e.get("actor")) == S.PLAYER for e in events):
+        # The GM skipped the traveller entirely; they still said it.
+        events.insert(0, {"actor": S.PLAYER, "check": None, "success": {
+            "text": "{player} says:", "room": S.location(state, S.PLAYER), "volume": "normal",
+            "subtle": False, "actor_text": ""}})
+    reports = []
+    for raw in events:
+        first_player = says and _to_id(state, raw.get("actor")) == S.PLAYER
+        reports.append(play_event(state, raw, rng, says if first_player else None))
+        if first_player:
+            says = None
+    return reports, stats
 
 
 # --- narrate -------------------------------------------------------------------
@@ -475,3 +553,36 @@ def narrate(state, lines, client):
     """Returns (prose, stats)."""
     reply, stats = client.chat(SYSTEM, narrate_message(state, lines), NARRATE_SCHEMA, llm.TEMP_CHARACTER)
     return _unbrace(state, reply.get("text", "").strip()), stats
+
+
+# --- splitting the traveller's typed line ----------------------------------------
+
+SPLIT_SCHEMA = {
+    "type": "object",
+    "properties": {"does": {"type": ["string", "null"]}, "says": {"type": ["string", "null"]}},
+    "required": ["does", "says"],
+}
+
+SPLIT_PROMPT = """A player typed this line for their character, the traveller, in a text
+role-playing game. Split it into what the traveller physically does and the
+exact words the traveller says out loud.
+
+- "say ...", "ask him ...", "tell her ..." and plain sentences with no
+  physical action ("I agree, it must be true", "no thank you") are speech.
+- Put speech in the traveller's own voice, as they would say it to the
+  listener: "ask her how long she has worked here" becomes "How long have
+  you worked here?". Otherwise keep the player's wording.
+- "does" is only the physical part, e.g. "walks to the front pew". Leave out
+  the speaking itself.
+- Use null for a part that is missing.
+
+The line: "{line}\""""
+
+
+def split_line(line, client):
+    """(does, says) for the traveller's typed line. Speech is then guaranteed to
+    reach the event, whatever the GM does with it."""
+    reply, _ = client.chat("You split player input for a game engine. Answer only with JSON.",
+                           SPLIT_PROMPT.replace("{line}", line.replace('"', "'")),
+                           SPLIT_SCHEMA, 0.2)
+    return (reply.get("does") or None), (reply.get("says") or None)
