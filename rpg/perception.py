@@ -130,9 +130,9 @@ def perceive(state, event, rng):
             if _hears(state, obs, HEAR_ADJACENT_LOUD, True, rng, checks):
                 if speech:
                     who = S.short(state, actor) if S.knows(state, obs, actor) else "an unfamiliar voice"
-                    line = f'From the {room}, I hear {who}: "{speech}"'
+                    line = f'From the {S.room_name(state, room)}, I hear {who}: "{speech}"'
                 else:
-                    line = f"I hear a loud noise from the {room}."
+                    line = f"I hear a loud noise from the {S.room_name(state, room)}."
 
         if line:
             perceptions[obs] = line
@@ -164,7 +164,7 @@ def arrive(state, aid, from_room, rng):
     mover gets no memory line; their departure event covers it."""
     clock = state["world"]["clock"]
     event = {"actor": aid, "room": S.location(state, aid),
-             "text": f"{{{aid}}} comes in from the {from_room}.", "volume": "silent", "subtle": False}
+             "text": f"{{{aid}}} comes in from the {S.room_name(state, from_room)}.", "volume": "silent", "subtle": False}
     perceptions, checks = perceive(state, event, rng)
     for obs, line in perceptions.items():
         S.actor(state, obs).setdefault("memory", []).append(

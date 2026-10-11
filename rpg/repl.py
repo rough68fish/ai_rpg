@@ -25,7 +25,7 @@ Plain text            play a turn: the GM resolves what you do, characters with
 /say <who> [whisper|loud] [@target] <words>
                       someone speaks; <who> is an id or 'player'
 /do <who> [subtle] [loud] [@target] <text>
-                      someone acts; write people as {id}, e.g. /do pip {pip} drops a candle
+                      someone acts; write people as {id}, e.g. /do anna {anna} drops a cup
 /move <who> <room>    move to an adjacent room (locked doors stop you)
 /next                 advance the clock one turn (one minute) and save
 /roll <who> <STAT> [mod]  roll d20 under STAT + mod
@@ -57,7 +57,7 @@ class Game:
     # --- helpers ---------------------------------------------------------
     def _id(self, who):
         who = who.lower()
-        if who in ("player", "me", "traveller"):
+        if who == "me" or who in S.player_words(self.state):
             return S.PLAYER
         if who in self.state["chars"]:
             return who
@@ -161,7 +161,7 @@ class Game:
         aid = self._id(who)
         room = S.location(self.state, aid)
         others = [S.name_for(self.state, aid, o) for o in S.in_room(self.state, room) if o != aid]
-        print(f"  {room}: {self.state['world']['rooms'][room]['desc']}")
+        print(f"  {S.room_name(self.state, room)} ({room}): {self.state['world']['rooms'][room]['desc']}")
         print(f"  you see: {', '.join(others) or 'nobody'}")
         print(f"  exits: {', '.join(S.adjacent(self.state, room))}")
 
@@ -233,7 +233,7 @@ class Game:
                      S.name_for(self.state, cid, oid).lower(), S.appearance(self.state, oid).lower()}
             if t in names or any(n in t for n in names if len(n) > 2):
                 return oid
-        if any(w in t for w in ("stranger", "traveller", "traveler", "visitor", "man at the door")):
+        if any(w in t for w in S.player_words(self.state) | {"visitor"}):
             return S.PLAYER
         return None
 

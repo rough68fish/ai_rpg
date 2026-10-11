@@ -15,15 +15,36 @@ PLAYER = "player"
 
 def load_scene(scene_dir):
     scene_dir = Path(scene_dir)
-    world = json.loads((scene_dir / "world.json").read_text())
+    world = json.loads((scene_dir / "world.json").read_text(encoding="utf-8"))
     chars = {}
     for path in sorted((scene_dir / "characters").glob("*.json")):
-        chars[path.stem] = json.loads(path.read_text())
+        chars[path.stem] = json.loads(path.read_text(encoding="utf-8"))
     return {"world": world, "chars": chars, "log": []}
 
 
-def new_run_dir(base):
-    run = Path(base) / datetime.now().strftime("%Y%m%d-%H%M%S")
+# --- modules -------------------------------------------------------------
+# A module is a folder under modules/ holding module.json (title, description),
+# world.json and characters/*.json. Everything scene-specific lives there.
+
+def list_modules(base):
+    """{name: module.json contents} for every module folder under base."""
+    return {d.name: json.loads((d / "module.json").read_text(encoding="utf-8"))
+            for d in sorted(Path(base).iterdir()) if (d / "module.json").exists()}
+
+
+def load_module(base, name):
+    folder = Path(base) / name
+    if not (folder / "module.json").exists():
+        raise SystemExit(f"no module called {name!r}; available: {', '.join(list_modules(base))}")
+    state = load_scene(folder)
+    info = json.loads((folder / "module.json").read_text(encoding="utf-8"))
+    state["module"] = {"name": name, "title": info.get("title", name)}
+    return state
+
+
+def new_run_dir(base, prefix=""):
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    run = Path(base) / (f"{prefix}-{stamp}" if prefix else stamp)
     run.mkdir(parents=True, exist_ok=True)
     return run
 
@@ -151,6 +172,80 @@ def roll_under(state, aid, ability, modifier, rng):
     roll = rng.randint(1, 20)
     return {"actor": aid, "ability": ability, "modifier": modifier,
             "target": target, "roll": roll, "success": roll <= target}
+
+
+def player_name(state):
+    """What the GM calls the player's character, e.g. "the traveller"."""
+    return state["world"]["player"].get("name", "the traveller")
+
+
+def player_words(state):
+    """Lower-case ways the GM or a character may refer to the player."""
+    p = state["world"]["player"]
+    return {"player", "stranger", "the stranger", "traveller", "the traveller",
+            p.get("name", "").lower(), p.get("short", "").lower(),
+            p.get("appearance", "").lower()} - {""}
+
+
+# Words in a name that are a form of address, not the name itself ("Father Tomas"
+# is still Tomas). A module can add its own in world.json "titles".
+TITLES = ("Father", "Mother", "Brother", "Sister", "Mr.", "Mrs.", "Miss", "Sir", "Dame",
+          "Lord", "Lady", "Master", "Mistress", "Captain", "Doctor", "Dr.")
+
+
+def titles(state):
+    return set(TITLES) | set(state["world"].get("titles", []))
+
+
+def room_name(state, room):
+    """A room's display name: its "name" in world.json, or the id with spaces."""
+    return state["world"]["rooms"][room].get("name") or room.replace("_", " ")
+
+
+def setting(state, part):
+    """A line of the module's setting: "gm" (for the GM), "known" (what every
+    character knows about where they live) or "era" (a rule for characters).
+    Empty when the module or an old snapshot has none."""
+    return state["world"].get("setting", {}).get(part, "")
+
+
+def _event(clock):
+    """(what, at) for the event the scene builds toward, e.g. ("mass", "09:00"),
+    or (None, None) when the module has none. Old snapshots have mass_at."""
+    if clock.get("mass_at") and not clock.get("event_at"):
+        return "mass", clock["mass_at"]
+    return clock.get("event"), clock.get("event_at")
+
+
+def event_line(state):
+    """The time and coming event for the GM, e.g. "08:20 (mass at 09:00, at the Terce bell)"."""
+    clock = state["world"]["clock"]
+    what, at = _event(clock)
+    if not at:
+        return clock["time"]
+    bell = f", at the {clock['bell']} bell" if clock.get("bell") else ""
+    return f"{clock['time']} ({what} at {at}{bell})"
+
+
+def time_line(state):
+    """The time as people in the scene tell it. With a "bell" in the clock (no
+    clocks in that era) it is told by the bell; otherwise by the clock."""
+    clock = state["world"]["clock"]
+    what, at = _event(clock)
+    if not at:
+        return f"It is {clock['time']}."
+    if not clock.get("bell"):
+        return f"It is {clock['time']}. {what.capitalize()} is at {at}."
+    h, m = map(int, clock["time"].split(":"))
+    eh, em = map(int, at.split(":"))
+    left = (eh * 60 + em) - (h * 60 + m)
+    bell = clock["bell"]
+    if left > 0:
+        return (f"The bell for {bell}, when {what} begins, will ring in "
+                f"about {max(5, round(left / 5) * 5)} minutes.")
+    if left == 0:
+        return f"The bell for {bell} is ringing: {what} is beginning."
+    return f"The {bell} bell has rung; {what} should already have begun."
 
 
 def make_rng(seed=None):

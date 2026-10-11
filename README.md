@@ -1,6 +1,6 @@
-# Church scene prototype
+# AI RPG prototype
 
-A text-only RPG scene for testing character agents: one small church, a traveller (you), three AI-driven characters and two the GM runs, all on one local model through Ollama. Each character knows only what it has perceived; the GM sees everything and Python rolls every die.
+A text-only RPG engine for testing character agents. Scenes come as modules; the first is one small church, a traveller (you), three AI-driven characters and two the GM runs, all on one local model through Ollama. Each character knows only what it has perceived; the GM sees everything and Python rolls every die.
 
 Design: [framework.md](framework.md). Prompts: [prompts.md](prompts.md).
 
@@ -9,8 +9,9 @@ Design: [framework.md](framework.md). Prompts: [prompts.md](prompts.md).
 Needs Python 3.10+ (no packages) and, for the model commands, [Ollama](https://ollama.com) running locally with a model pulled.
 
 ```
-python play.py                          # play; random dice, default model gemma4:26b
-python play.py --seed 3                 # repeatable dice
+python play.py                          # list the modules
+python play.py St_Aurel_1100            # play one; random dice, default model gemma4:26b
+python play.py St_Aurel_1100 --seed 3   # repeatable dice
 python play.py --model gemma4:26b       # or set RPG_MODEL; --ollama / OLLAMA_URL for the server
 python play.py --debug                  # plain text is just speech; drive each step by hand
 python play.py --resume runs/<run>/turn_004.json
@@ -73,9 +74,29 @@ Then `python replay.py` to read it back. `/commands` still drive each step by ha
 | `/promote <who>`, `/demote <who>` | Switch between agent and GM-managed. |
 | `/save`, `/help`, `/quit` | |
 
+## Modules
+
+Each folder under `modules/` is a module you can play by name. Everything specific to the scene lives there; the engine in `rpg/` has no scene text in it.
+
+```
+modules/St_Aurel_1100/   the church in a D&D-style medieval world around 1100
+modules/St_Aurel_1989/   the same church and mystery in an English parish in 1989
+modules/Lighthouse_1912/ a Maine lighthouse in a storm, a failing light and a keeper with something to hide
+```
+
+A module folder holds:
+
+- `module.json`: `title` and `description`, shown when you run `python play.py` with no module.
+- `world.json`: rooms, doors, objects, ground truth, the player, and two module-wide blocks. `player.name` is what the GM and narrator call the player's character ("the traveller"). A room can have a `name` for display ("keeper's quarters"); otherwise its id is used. Optional `titles` adds forms of address that aren't part of a name, on top of built-in ones like Father, Sir and Lady.
+  - `setting`: `gm` (era and tone, shown to the GM and narrator), `known` (what every character knows about where they live) and `era` (a rule added to every character's prompt).
+  - `clock`: start `time`, and optionally the `event` the scene builds toward and `event_at`. Add `bell` (e.g. `"Terce"`) for eras without clocks: characters are then told the time by the bell instead of the hour.
+- `characters/<id>.json`: one file per character, with hidden stats and `mode` (`agent` or `managed`).
+
+`setting`, `doors`, `truth`, `titles` and the clock's event are optional. To make a new module, copy a folder, rename it, and edit the files.
+
 ## Replays
 
-Every `/next` (and `/quit`) saves the full state to `runs/<timestamp>/turn_NNN.json`, so you can diff turns or resume from one. `runs/` is git-ignored.
+Every `/next` (and `/quit`) saves the full state to `runs/<module>-<timestamp>/turn_NNN.json`, so you can diff turns or resume from one. `runs/` is git-ignored.
 
 ```
 python replay.py                          # latest run, opens in the browser
@@ -98,7 +119,7 @@ rpg/llm.py           Ollama /api/chat client (schema-constrained JSON replies)
 rpg/gm.py            GM resolve and narrate: prompts, branch-and-roll, validated state changes
 rpg/modes.py         promotion, demotion, memory summaries
 rpg/repl.py          the REPL
-scene/               starting state (world.json, characters/*.json)
+modules/             playable modules (module.json, world.json, characters/*.json)
 framework.md         design: scene, perception rules, turn loop
 prompts.md           GM and character prompts with schemas
 ```
@@ -118,7 +139,7 @@ Characters are told to answer the person who actually spoke to them, and that a 
 - Only the traveller's own actions can move the traveller.
 - If the traveller's move fails, they remember that it failed, so the narration can't walk them somewhere they never got.
 
-Objects marked `concealed` (Aldric's key under his cassock) are flagged to the GM as out of sight. Names the GM writes out are turned back into `{id}` so observers still only see names they know.
+Objects marked `concealed` (Aldric's key under his robe) are flagged to the GM as out of sight. Names the GM writes out are turned back into `{id}` so observers still only see names they know.
 
 **A turn (plain text or `/turn`).** These are the steps of the turn loop in framework.md:
 

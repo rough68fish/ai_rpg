@@ -1,0 +1,107 @@
+{
+  "setting": {
+    "era": "It is 1912. Think and speak like someone of that time: no later words, objects or ideas.",
+    "gm": "A lighthouse on Grey Rock, a bare island off the coast of Maine, in October 1912. Kerosene lamps, a clockwork-turned lens, a telegraph only on the mainland. A storm is building: wind rising, sea getting up. Nothing supernatural happens. The scene builds toward nightfall, when the lamp must be lit.",
+    "known": "You live on Grey Rock, a lighthouse island two miles off the coast of Maine, in the autumn of 1912. The supply boat comes from Port Clyde once a fortnight. The nearest neighbors are on the mainland."
+  },
+  "clock": {
+    "turn": 0,
+    "time": "19:40",
+    "event": "nightfall",
+    "event_at": "20:00"
+  },
+  "titles": [
+    "Keeper",
+    "Assistant",
+    "Inspector"
+  ],
+  "rooms": {
+    "boat_landing": {
+      "name": "boat landing",
+      "desc": "Slick granite steps down to a timber landing, waves slapping at the pilings. A rope rail leads up to the keeper's house.",
+      "adjacent": [
+        "keepers_quarters"
+      ]
+    },
+    "keepers_quarters": {
+      "name": "keeper's quarters",
+      "desc": "A low kitchen with an iron stove, a scrubbed table, a lamp on a hook and oilskins dripping by the door. A shelf holds the station logbook. A narrow door leads to the tower stairs, another to the oil store.",
+      "adjacent": [
+        "boat_landing",
+        "oil_store",
+        "tower_stairs"
+      ]
+    },
+    "oil_store": {
+      "name": "oil store",
+      "desc": "A brick room that smells of kerosene. Rows of oil cans, spare wicks, a workbench with lamp parts.",
+      "adjacent": [
+        "keepers_quarters"
+      ]
+    },
+    "tower_stairs": {
+      "name": "tower stairs",
+      "desc": "An iron spiral staircase climbing the inside of the tower. Every step rings underfoot.",
+      "adjacent": [
+        "keepers_quarters",
+        "lamp_room"
+      ]
+    },
+    "lamp_room": {
+      "name": "lamp room",
+      "desc": "A glass-walled room at the top of the tower around the great Fresnel lens and its kerosene lamp. Wind moans around the gallery outside.",
+      "adjacent": [
+        "tower_stairs"
+      ]
+    }
+  },
+  "doors": {
+    "keepers_quarters-oil_store": {
+      "locked": true,
+      "key": "oil_key",
+      "noise": "the bolt grates loudly"
+    }
+  },
+  "objects": {
+    "oil_key": {
+      "location": "jonah",
+      "desc": "Brass key to the oil store, on a nail-chain in Jonah Price's waistcoat pocket.",
+      "concealed": true
+    },
+    "logbook": {
+      "location": "keepers_quarters",
+      "desc": "The station logbook. Entries in Keeper Hale's hand say the light burned all night every night this month.",
+      "hidden": false
+    },
+    "watered_oil": {
+      "location": "oil_store",
+      "desc": "Three oil cans at the back that have been cut with water. Lamp oil from them sputters and dies after an hour or two.",
+      "hidden": true,
+      "find": "INT -2 when examining the oil cans"
+    },
+    "letter": {
+      "location": "boat_landing",
+      "desc": "A letter in a tobacco tin wedged under the bottom landing step: 'Dark on the 14th and 28th, same as before. Usual pay. - M.'",
+      "hidden": true,
+      "find": "WIS -4 when searching the landing steps"
+    },
+    "lantern": {
+      "location": "keepers_quarters",
+      "desc": "A hand lantern on a hook by the door."
+    }
+  },
+  "truth": [
+    "Jonah Price is paid by a rum-runner called Marsh to let the light fail on agreed nights so boats can land unseen on the mainland shore.",
+    "Jonah makes the light fail by filling the lamp from watered oil cans he keeps at the back of the oil store.",
+    "The instructions come in letters left in a tobacco tin under the bottom step of the boat landing. The latest says the light must go dark tonight, the 14th.",
+    "Keeper Hale knows the light has failed twice this month, but he fell asleep on watch both times and wrote in the logbook that it burned all night."
+  ],
+  "player": {
+    "name": "the inspector",
+    "short": "the inspector",
+    "appearance": "a man in a wet Lighthouse Service greatcoat",
+    "location": "boat_landing",
+    "known": [],
+    "memory": []
+  }
+}

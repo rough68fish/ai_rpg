@@ -42,8 +42,12 @@ def system_message(state, cid):
     idn = rec["identity"]
     rels = [f"{S.short(state, other)}: {feeling}"
             for other, feeling in idn.get("relationships", {}).items()]
+    era = S.setting(state, "era")
+    rules = RULES.replace("Rules:\n", f"Rules:\n- {era}\n", 1) if era else RULES
     return f"""You are {idn['name']}, {idn['age']}, {idn['role']}. You are a person
 in a story, not an assistant. Stay fully in character at all times.
+
+Where you live: {S.setting(state, 'known') or 'a small village'}
 
 Who you are: {idn['personality']}
 How you speak: {idn['voice']}
@@ -56,7 +60,7 @@ What you know that others don't:
 How you feel about people:
 {_bullets(rels, 'no one in particular')}
 
-{RULES}"""
+{rules}"""
 
 
 def seen_count(rec):
@@ -89,8 +93,8 @@ def user_message(state, cid):
     old, new = _select_memories(memories[:seen]), memories[seen:]
     visible = [S.name_for(state, cid, o) + ("" if S.knows(state, cid, o) else " (name unknown)")
                for o in S.in_room(state, room) if o != cid]
-    return f"""It is {world['clock']['time']}. Mass is at {world['clock']['mass_at']}.
-You are in the {room}: {world['rooms'][room]['desc']}
+    return f"""{S.time_line(state)}
+You are in the {S.room_name(state, room)}: {world['rooms'][room]['desc']}
 You can see: {', '.join(visible) if visible else 'nobody'}.
 
 What you believe:

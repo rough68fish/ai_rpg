@@ -2,11 +2,11 @@
 
 A text-only prototype of one scene, built to test the character-agent design (in a separate design doc, not in this repo) before anything bigger. Python, the Ollama HTTP API, JSON files for state, one shared local model for every role.
 
-Prompts are in [prompts.md](prompts.md). Starting state is in `scene/`.
+Prompts are in [prompts.md](prompts.md). Starting state is in `modules/St_Aurel_1100/` (and the 1989 version in `modules/St_Aurel_1989/`).
 
 ## The scene
 
-St. Aurel's, a small stone church, about forty minutes before morning mass. The player is a traveller who walks in through the front door. Rumor says the church hides a relic.
+St. Aurel's, a small stone church in the village of Aurelsford, in a D&D-style medieval world around the year 1100, about forty minutes before the bell for morning mass. The player is a traveller who walks in through the front door. Rumor says the church hides a relic.
 
 **Ground truth (GM only):** the relic is real. It is the Reliquary of St. Aurel, a palm-sized silver box holding a knuckle bone, hidden behind a loose stone in the crypt wall directly under the altar. The crypt is reached by a locked stair door in the sacristy. Father Aldric has the only key, on a cord around his neck.
 
@@ -41,11 +41,12 @@ Martha's hearing is a trait plus a penalty the engine applies to her hearing che
 ai_rpg/
   framework.md        this file
   prompts.md          GM and character prompts
-  scene/
-    world.json        rooms, objects, ground truth, clock
+  modules/St_Aurel_1100/
+    module.json       title and description
+    world.json        setting, rooms, objects, ground truth, clock
     characters/       one record per character (agent or GM-managed)
       aldric.json  tomas.json  pip.json  agnes.json  martha.json
-  runs/<timestamp>/   created per playthrough: event log + state snapshots
+  runs/<module>-<timestamp>/   created per playthrough: event log + state snapshots
 ```
 
 One record per character, used in both modes, as the design doc requires. Fields:

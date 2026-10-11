@@ -36,14 +36,18 @@ Your duties:
 4. Run the background characters (mode "managed"). Move them, advance their
    goals, and give them small actions that fit who they are. Anything that
    happens to or near them must be something they could witness.
-5. Keep the scene moving toward mass at nine. Let small, natural things
-   happen (a dropped candle, a bell, someone calling a name) when the scene
-   stalls, but never force a revelation.
+5. Keep the scene moving, toward the event named under Time if there is one. Let small,
+   natural things happen (something dropped, a noise outside, someone calling
+   a name) when the scene stalls, but never force a revelation.
+6. Keep everything true to the Setting in the world state: objects, tools,
+   clothing, how people speak and what they believe. Nothing from outside
+   that time and place.
 
 Writing events:
 - Each event is one thing that happened, in plain objective third person,
   one or two sentences.
-- Refer to people by id in braces, e.g. "{tomas} hands {pip} a candle". The
+- Refer to people by id in braces, e.g. "{anna} hands {ben} a cup" if their
+  ids are anna and ben. The
   engine rewrites this for each observer (a name if they know the person, a
   description if not, "me" for themselves).
 - Give every event a room, a volume ("silent", "whisper", "normal", "loud")
@@ -86,9 +90,10 @@ happen. Commands:
   unlock <door>         the actor must hold the door's key; also: lock <door>
   reveal <object>       a hidden object is found; the actor must be in its room
   know <id> <id>        the first learns the second's name, e.g. after an introduction
-Examples: "I take the ledger" -> ["give parish_register player"];
-"I go back to the nave" -> ["move player nave"]; "{tomas} pockets the key he
-was handed" -> ["give crypt_key tomas"]. Use [] when nothing changes."""
+Examples, with <...> standing for the real ids from WORLD STATE: "I take the
+book" -> ["give <book id> player"]; "I go back to the hall" -> ["move player
+<hall id>"]; "{<id>} pockets the key he was handed" -> ["give <key id> <id>"].
+Use [] when nothing changes."""
 
 _OUTCOME = {
     "type": "object",
@@ -192,8 +197,9 @@ def resolve_message(state, intents, tick=()):
                      f"\n  says (exact words for \"speech\"): {it.get('says') or 'nothing'}")
         lines.append(line)
 
-    return f"""WORLD STATE
-Time: {w['clock']['time']} (mass at {w['clock']['mass_at']}), turn {turn}
+    return _pc(state, f"""WORLD STATE
+Setting: {S.setting(state, 'gm')}
+Time: {S.event_line(state)}, turn {turn}
 Rooms:
 {_bullets(rooms)}
 Doors:
@@ -217,15 +223,23 @@ INTENTS TO RESOLVE
 MANAGED CHARACTERS TO TICK
 {_bullets(list(tick))}
 
-{TASK}"""
+{TASK}""")
 
 
 # --- normalising the model's events ------------------------------------------
 
+def _pc(state, text):
+    """The engine's prompts call the player's character "the traveller"; use the
+    module's own name for them instead."""
+    name = S.player_name(state)
+    return text.replace("the traveller", name).replace("The traveller", name[:1].upper() + name[1:])
+
+
 def _name_patterns(state):
     """(regex, id) pairs that turn names the GM wrote out back into {id}, so each
     observer still sees only the names they know. Longest names first."""
-    pairs = [("the traveller", S.PLAYER), ("The traveller", S.PLAYER)]
+    pc = S.player_name(state)
+    pairs = [(pc, S.PLAYER), (pc[:1].upper() + pc[1:], S.PLAYER)]
     for cid, rec in state["chars"].items():
         idn = rec["identity"]
         names = {idn["name"], idn["short"], idn["short"].split()[-1]}
@@ -244,7 +258,7 @@ def _to_id(state, who):
     if not who:
         return None
     w = str(who).strip().strip("{}").lower()
-    if w in ("player", "traveller", "the traveller", "traveler", "stranger", "the stranger"):
+    if w in S.player_words(state):
         return S.PLAYER
     if w in state["chars"]:
         return w
@@ -305,10 +319,10 @@ def _door(state, name):
 
 
 def _spoken_names(state, cid):
-    """Ways someone's name can be said aloud: "Agnes Pell", "Agnes", "Pell"."""
+    """Ways someone's name can be said aloud: "Pip (Philip)" -> "Pip", "Philip"."""
     idn = state["chars"][cid]["identity"]
     words = idn["name"].replace("(", " ").replace(")", " ").split() + idn["short"].split()
-    return {w for w in words if w not in ("Father", "Mrs.", "Mr.")} | {idn["short"]}
+    return {w for w in words if w not in S.titles(state)} | {idn["short"]}
 
 
 def apply_change(state, actor, cmd, rng, event=None):
@@ -578,12 +592,14 @@ def narrate_message(state, lines):
                if S.knows(state, S.PLAYER, o) else S.appearance(state, o)
                for o in S.in_room(state, room) if o != S.PLAYER]
     known = [S.short(state, o) for o in player.get("known", [])]
-    return f"""Write what the traveller experiences this turn, in second person, present
+    return _pc(state, f"""Write what the traveller experiences this turn, in second person, present
 tense. Use ONLY these events, which are the ones the traveller perceived.
 Do not add facts, objects or motives that are not in them. Describe people by
-how they look and sound unless the traveller has learned their name.
+how they look and sound unless the traveller has learned their name. Use
+words and details that fit the setting below.
 
-Where the traveller is: the {room}. {state['world']['rooms'][room]['desc']}
+Setting: {S.setting(state, 'gm')}
+Where the traveller is: the {S.room_name(state, room)}. {state['world']['rooms'][room]['desc']}
 Who the traveller can see: {', '.join(visible) or 'nobody'}
 Names the traveller knows: {', '.join(known) or 'none'}
 
@@ -592,7 +608,7 @@ Perceived events (the traveller's own memory, "I" is the traveller):
 
 Write 2 to 6 sentences of plain prose: this is read by the player, so no
 {{braces}} or ids. End by quoting anything said directly to the traveller. Do
-not ask the player what they do next."""
+not ask the player what they do next.""")
 
 
 def _unbrace(state, text):
@@ -631,7 +647,7 @@ exact words the traveller says out loud.
 - Put speech in the traveller's own voice, as they would say it to the
   listener: "ask her how long she has worked here" becomes "How long have
   you worked here?". Otherwise keep the player's wording.
-- "does" is only the physical part, e.g. "walks to the front pew". Leave out
+- "does" is only the physical part, e.g. "walks over to the door". Leave out
   the speaking itself.
 - "volume": how the words are said: "whisper", "normal", or "loud" (shouting,
   calling out, saying it loudly or clearly to someone hard of hearing).
@@ -652,7 +668,7 @@ def split_line(state, line, client):
                                              "goes_to": {"enum": list(rooms) + [None]},
                                              "volume": {"enum": ["whisper", "normal", "loud"]}}}
     room_lines = "\n".join(f"  - {r}: {d['desc']}" for r, d in rooms.items())
-    prompt = (SPLIT_PROMPT.replace("{rooms}", room_lines)
+    prompt = (_pc(state, SPLIT_PROMPT).replace("{rooms}", room_lines)
               .replace("{here}", S.location(state, S.PLAYER))
               .replace("{line}", line.replace('"', "'")))
     reply, _ = client.chat("You split player input for a game engine. Answer only with JSON.",

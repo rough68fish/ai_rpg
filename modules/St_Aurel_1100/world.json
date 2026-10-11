@@ -1,0 +1,96 @@
+{
+  "setting": {
+    "era": "You live around the year 1100. Think and speak like someone of your time: no modern words, objects or ideas.",
+    "gm": "A generic D&D-style medieval world around the year 1100. Everyone believes in saints' relics, curses and the restless dead, but in this scene nothing supernatural happens unless the ground truth says so. No clocks, glass windows, pews, printed books, gunpowder or modern surnames. Most folk cannot read; priests read Latin. Time is told by the sun and the church bells for the canonical hours. The scene builds toward morning mass.",
+    "known": "You live in Aurelsford, a village of a few dozen households in the Barony of Holmcote, in the Year of Our Lord 1100. The baron keeps the castle up the valley and the bishop is three days' ride away. The roads are poor and not safe after dark."
+  },
+  "clock": {
+    "turn": 0,
+    "time": "08:20",
+    "event": "mass",
+    "event_at": "09:00",
+    "bell": "Terce"
+  },
+  "rooms": {
+    "narthex": {
+      "desc": "Small stone porch at the west end. A stone stoup of holy water, a bench where the poor wait for alms, and a heavy iron-studded oak door to the village green.",
+      "adjacent": [
+        "nave"
+      ]
+    },
+    "nave": {
+      "desc": "Bare flagstone floor strewn with rushes; there are no benches, folk stand for mass. A stone ledge along the walls for the old and lame. Thick walls with small round-headed windows shuttered with oiled linen, and faded saints painted on the plaster. It smells of tallow smoke and old rushes.",
+      "adjacent": [
+        "narthex",
+        "sanctuary"
+      ]
+    },
+    "sanctuary": {
+      "desc": "Raised altar of pale stone under a round chancel arch, beeswax candles on iron prickets, a carved wooden rood screen. A side door leads to the sacristy.",
+      "adjacent": [
+        "nave",
+        "sacristy"
+      ]
+    },
+    "sacristy": {
+      "desc": "Cramped vestry: an iron-bound chest for vestments and the church plate, a stone basin in the wall for washing the holy vessels, white albs on wooden pegs. A low iron-banded door in the corner leads down.",
+      "adjacent": [
+        "sanctuary",
+        "crypt"
+      ]
+    },
+    "crypt": {
+      "desc": "Low barrel-vaulted undercroft of old stone tombs, directly beneath the altar. Damp, cold and pitch dark without a light.",
+      "adjacent": [
+        "sacristy"
+      ]
+    }
+  },
+  "doors": {
+    "sacristy-crypt": {
+      "locked": true,
+      "key": "crypt_key",
+      "noise": "the hinges squeal loudly"
+    }
+  },
+  "objects": {
+    "crypt_key": {
+      "location": "aldric",
+      "desc": "Iron key on a leather thong around Father Aldric's neck, under his black wool robe.",
+      "concealed": true
+    },
+    "loose_stone": {
+      "location": "crypt",
+      "desc": "A stone in the north wall below the altar that slides out if pressed at the lower left corner.",
+      "hidden": true,
+      "find": "WIS -4 when searching the north wall"
+    },
+    "reliquary": {
+      "location": "behind loose_stone",
+      "desc": "Palm-sized tarnished silver box set with garnets, holding the knuckle bone of St. Aurel. Pilgrims once swore it cured the falling sickness.",
+      "hidden": true
+    },
+    "chalice": {
+      "location": "sacristy",
+      "desc": "Silver chalice being polished for mass."
+    },
+    "parish_register": {
+      "location": "sacristy",
+      "desc": "The church's old psalter, bound in wooden boards. On a blank leaf at the back, a faded Latin note from the winter of the raids reads 'reliquiae sub altare reconditae' (the relics hidden away beneath the altar). Only someone who reads Latin can make it out.",
+      "hidden": false
+    }
+  },
+  "truth": [
+    "The Reliquary of St. Aurel is real and hidden behind the loose stone in the crypt.",
+    "Only Father Aldric knows its location. Father Benedict, the old priest, told him on his deathbed thirty-five years ago.",
+    "Father Benedict hid the relic forty years ago, the winter raiders burned the valley and looted the abbey at Holmcote. Agnes saw him carry a small silver box down to the crypt that winter and has never mentioned it."
+  ],
+  "player": {
+    "name": "the traveller",
+    "short": "the traveller",
+    "appearance": "a travel-worn stranger in a muddy cloak",
+    "location": "narthex",
+    "known": [],
+    "memory": []
+  }
+}

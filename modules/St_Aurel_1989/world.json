@@ -1,8 +1,14 @@
 {
+  "setting": {
+    "era": "It is 1989. Think and speak like someone of that time: nothing from later years.",
+    "gm": "A small English country parish in 1989. No mobile phones, internet or anything from later years. Nothing supernatural happens. The scene builds toward morning mass at nine.",
+    "known": "You live in Aurelsford, a small country village, in 1989. The bishop's office is in the cathedral city an hour away by car."
+  },
   "clock": {
     "turn": 0,
     "time": "08:20",
-    "mass_at": "09:00"
+    "event": "mass",
+    "event_at": "09:00"
   },
   "rooms": {
     "narthex": {
@@ -69,13 +75,13 @@
     },
     "parish_register": {
       "location": "sacristy",
-      "desc": "Old leather ledger. An entry from 1961 notes 'relic moved below for safekeeping'.",
+      "desc": "Old leather ledger. An entry from 1949 notes 'relic moved below for safekeeping'.",
       "hidden": false
     }
   },
   "truth": [
     "The Reliquary of St. Aurel is real and hidden behind the loose stone in the crypt.",
-    "Only Father Aldric knows its location. He was told by the previous priest, Father Benedict, in 1989.",
+    "Only Father Aldric knows its location. He was told by the previous priest, Father Benedict, in 1954.",
     "Agnes saw Father Benedict carry a small silver box down to the crypt about forty years ago and has never mentioned it."
   ],
   "player": {

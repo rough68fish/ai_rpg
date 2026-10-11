@@ -1,4 +1,8 @@
-"""Church scene prototype: python play.py [--seed N] [--model NAME] [--debug]"""
+"""Play a module: python play.py <module> [--seed N] [--model NAME] [--debug]
+
+python play.py                 lists the modules in modules/
+python play.py St_Aurel_1100   starts that module
+"""
 import argparse
 from pathlib import Path
 
@@ -7,12 +11,19 @@ from rpg import state as S
 from rpg.repl import Game
 
 HERE = Path(__file__).parent
+MODULES = HERE / "modules"
+
+
+def print_modules():
+    print("Modules (python play.py <name>):")
+    for name, info in S.list_modules(MODULES).items():
+        print(f"  {name:18} {info.get('title', '')}: {info.get('description', '')}")
 
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("module", nargs="?", help="module folder name under modules/, e.g. St_Aurel_1100")
     ap.add_argument("--seed", type=int, default=None, help="fix dice for a repeatable run")
-    ap.add_argument("--scene", default=HERE / "scene")
     ap.add_argument("--resume", help="path to a turn_NNN.json snapshot")
     ap.add_argument("--continue", dest="cont", metavar="RUN_DIR",
                     help="carry on a run from its latest snapshot, saving into the same folder")
@@ -25,13 +36,25 @@ def main():
     if args.cont:
         run_dir = Path(args.cont)
         snaps = sorted(run_dir.glob("turn_*.json"))
-        state = S.load_snapshot(snaps[-1]) if snaps else S.load_scene(args.scene)
+        if snaps:
+            state = S.load_snapshot(snaps[-1])
+        elif args.module:
+            state = S.load_module(MODULES, args.module)
+        else:
+            raise SystemExit(f"no snapshots in {run_dir}; name a module to start one there")
+    elif args.resume:
+        state = S.load_snapshot(args.resume)
+        run_dir = S.new_run_dir(HERE / "runs", state.get("module", {}).get("name", ""))
+    elif args.module:
+        state = S.load_module(MODULES, args.module)
+        run_dir = S.new_run_dir(HERE / "runs", args.module)
     else:
-        state = S.load_snapshot(args.resume) if args.resume else S.load_scene(args.scene)
-        run_dir = S.new_run_dir(HERE / "runs")
+        print_modules()
+        return
     game = Game(state, run_dir, S.make_rng(args.seed), llm.Client(args.model, args.ollama),
                 debug=args.debug)
-    print(f"St. Aurel's, {state['world']['clock']['time']}. Model {args.model}. "
+    title = state.get("module", {}).get("title", "Old save")
+    print(f"{title}, {state['world']['clock']['time']}. Model {args.model}. "
           f"Saving to {run_dir}. /help for commands.")
     game.look()
     while True:

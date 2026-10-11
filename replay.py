@@ -23,7 +23,7 @@ def find_snapshot(arg):
     """A snapshot path from a file, a run folder, or nothing (latest run)."""
     if arg and Path(arg).is_file():
         return Path(arg)
-    runs = [Path(arg)] if arg else sorted((HERE / "runs").glob("*"), reverse=True)
+    runs = [Path(arg)] if arg else sorted((HERE / "runs").glob("*"), key=lambda p: p.stat().st_mtime, reverse=True)
     for run in runs:
         snaps = sorted(run.glob("turn_*.json"))
         if snaps:
