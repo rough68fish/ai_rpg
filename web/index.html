@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI RPG viewer</title>
+<style>
+  :root {
+    --bg: #f6f4ef; --panel: #fffdf8; --text: #26231e; --muted: #7a7366; --line: #e3ddd0;
+    --accent: #8a4b14; --error: #b42318; --you: #1f5f8b; --mono: ui-monospace, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #17161a; --panel: #201f24; --text: #e9e5dc; --muted: #9b958a; --line: #34323a;
+            --accent: #e0a060; --error: #f97066; --you: #7cb8e4; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--bg); color: var(--text); font: 16px/1.55 Georgia, "Times New Roman", serif;
+         display: grid; grid-template-rows: auto 1fr auto; }
+  header { display: flex; gap: 16px; align-items: baseline; flex-wrap: wrap;
+           padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { font-size: 18px; margin: 0; }
+  header .time { color: var(--muted); }
+  header .spacer { flex: 1; }
+  header label { font: 13px system-ui, sans-serif; color: var(--muted); cursor: pointer; }
+  #state { font: 13px system-ui, sans-serif; }
+  #state.busy { color: var(--accent); }
+  #state.busy::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 6px;
+                        border-radius: 50%; background: var(--accent); animation: pulse 1s infinite; }
+  #state.off { color: var(--error); }
+  @keyframes pulse { 50% { opacity: .25; } }
+  main { display: grid; grid-template-columns: 1fr 260px; min-height: 0; }
+  #feed { overflow-y: auto; padding: 16px; }
+  #feed > * { max-width: 760px; margin-left: auto; margin-right: auto; }
+  aside { border-left: 1px solid var(--line); background: var(--panel); padding: 12px 16px; overflow-y: auto;
+          font: 14px system-ui, sans-serif; }
+  aside h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 12px 0 4px; }
+  aside ul { list-style: none; margin: 0; padding: 0; }
+  aside li { padding: 2px 0; }
+  aside .mode { color: var(--muted); font-size: 12px; }
+  .block { border-bottom: 1px solid var(--line); padding: 12px 0; }
+  .input { font: 15px system-ui, sans-serif; color: var(--you); font-weight: 600; }
+  .input .src { font-weight: 400; color: var(--muted); font-size: 12px; margin-right: 6px; }
+  .narration { margin: 8px 0; font-size: 17px; }
+  .steps { font: 13px system-ui, sans-serif; color: var(--muted); margin: 4px 0; }
+  .steps span + span::before { content: " · "; }
+  pre { font: 12.5px/1.45 var(--mono); white-space: pre-wrap; margin: 6px 0; overflow-wrap: anywhere; }
+  .error { color: var(--error); }
+  details { margin: 6px 0; }
+  summary { font: 12px system-ui, sans-serif; color: var(--muted); cursor: pointer; }
+  body:not(.details) details.trace { display: none; }
+  footer { border-top: 1px solid var(--line); background: var(--panel); padding: 10px 16px; }
+  footer form { display: flex; gap: 8px; max-width: 760px; margin: 0 auto; }
+  footer input { flex: 1; font: 15px system-ui, sans-serif; padding: 8px 10px; border: 1px solid var(--line);
+                 border-radius: 6px; background: var(--bg); color: var(--text); min-width: 0; }
+  footer button { font: 14px system-ui, sans-serif; padding: 8px 14px; border: 0; border-radius: 6px;
+                  background: var(--accent); color: var(--panel); cursor: pointer; }
+  @media (max-width: 720px) {
+    main { grid-template-columns: 1fr; }
+    aside { display: none; }
+  }
+</style>
+</head>
+<body class="details">
+<header>
+  <h1 id="title">AI RPG</h1>
+  <span class="time" id="time"></span>
+  <span class="spacer"></span>
+  <span id="state" class="off">connecting</span>
+  <label><input type="checkbox" id="showDetails" checked> details</label>
+</header>
+<main>
+  <div id="feed"></div>
+  <aside>
+    <h2>Where everyone is</h2>
+    <div id="rooms"></div>
+  </aside>
+</main>
+<footer>
+  <form id="form">
+    <input id="line" autocomplete="off" placeholder="Type to play as the traveller, or /help (optional, you can just watch)">
+    <button>Send</button>
+  </form>
+</footer>
+<script>
+const feed = document.getElementById("feed");
+const stateEl = document.getElementById("state");
+let block = null, since = 0;
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+function atBottom() { return feed.scrollHeight - feed.scrollTop - feed.clientHeight < 80; }
+
+function newBlock() {
+  block = { root: el("div", "block"), steps: null, trace: null, info: null };
+  feed.appendChild(block.root);
+  return block;
+}
+
+function current() { return block || newBlock(); }
+
+function pre(b, key, cls, text) {
+  // consecutive lines of one kind share one <pre>
+  if (b.last !== key) {
+    if (key === "trace") {
+      const d = el("details", "trace");
+      d.appendChild(el("summary", null, "turn details"));
+      b[key] = d.appendChild(el("pre"));
+      b.root.appendChild(d);
+    } else {
+      b[key] = b.root.appendChild(el("pre", cls));
+    }
+    b.last = key;
+  }
+  b[key].textContent += (b[key].textContent ? "\n" : "") + text.replace(/^\n+/, "");
+}
+
+function setStatus(ev) {
+  document.getElementById("title").textContent = ev.module || "AI RPG";
+  document.title = ev.module || "AI RPG viewer";
+  document.getElementById("time").textContent = ev.text;
+  const rooms = {};
+  for (const c of ev.chars) (rooms[c.room] = rooms[c.room] || []).push(c);
+  const box = document.getElementById("rooms");
+  box.replaceChildren();
+  for (const [room, people] of Object.entries(rooms)) {
+    box.appendChild(el("h2", null, room));
+    const ul = box.appendChild(el("ul"));
+    for (const c of people) {
+      const li = ul.appendChild(el("li", null, c.name + " "));
+      li.appendChild(el("span", "mode", c.mode));
+    }
+  }
+}
+
+function show(ev, live) {
+  const stick = atBottom();
+  switch (ev.kind) {
+    case "busy": {
+      const b = newBlock();
+      if (live) { stateEl.className = "busy"; stateEl.textContent = "playing"; }
+      break;
+    }
+    case "idle":
+      block = null;
+      if (live) { stateEl.className = ""; stateEl.textContent = "waiting"; }
+      break;
+    case "input": {
+      const b = current(), p = el("div", "input");
+      p.appendChild(el("span", "src", ev.source));
+      p.appendChild(document.createTextNode(ev.text));
+      b.root.appendChild(p); b.last = "input";
+      break;
+    }
+    case "step": {
+      const b = current();
+      if (!b.steps) b.steps = b.root.appendChild(el("div", "steps"));
+      b.steps.appendChild(el("span", null, ev.text));
+      if (live) stateEl.textContent = ev.text;
+      break;
+    }
+    case "narration": {
+      const b = current();
+      b.root.appendChild(el("p", "narration", ev.text)); b.last = "narration";
+      break;
+    }
+    case "trace": pre(current(), "trace", "", ev.text); break;
+    case "info":  pre(current(), "info", "", ev.text); break;
+    case "error": pre(current(), "error", "error", ev.text); break;
+    case "status": setStatus(ev); break;
+  }
+  since = ev.seq + 1;
+  if (stick) feed.scrollTop = feed.scrollHeight;
+}
+
+function connect() {
+  const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws?since=${since}`);
+  ws.onopen = () => { stateEl.className = ""; stateEl.textContent = "waiting"; };
+  ws.onmessage = (m) => {
+    const data = JSON.parse(m.data);
+    if (data.backlog) {
+      for (const ev of data.backlog) show(ev, false);
+      const last = data.backlog[data.backlog.length - 1];
+      if (last && last.kind !== "idle" && block) { stateEl.className = "busy"; stateEl.textContent = "playing"; }
+      feed.scrollTop = feed.scrollHeight;
+    } else show(data, true);
+  };
+  ws.onclose = () => {
+    stateEl.className = "off"; stateEl.textContent = "disconnected, retrying";
+    setTimeout(connect, 2000);
+  };
+}
+
+document.getElementById("form").onsubmit = async (e) => {
+  e.preventDefault();
+  const input = document.getElementById("line"), text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+  await fetch("/api/input", { method: "POST", headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ text, source: "web" }) });
+};
+
+const toggle = document.getElementById("showDetails");
+try { toggle.checked = localStorage.getItem("details") !== "off"; } catch (e) {}
+const applyToggle = () => {
+  document.body.classList.toggle("details", toggle.checked);
+  try { localStorage.setItem("details", toggle.checked ? "on" : "off"); } catch (e) {}
+};
+toggle.onchange = applyToggle;
+applyToggle();
+connect();
+</script>
+</body>
+</html>
