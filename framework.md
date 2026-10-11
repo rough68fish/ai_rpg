@@ -52,8 +52,11 @@ ai_rpg/
 One record per character, used in both modes, as the design doc requires. Fields:
 
 - `identity`: name, age, role, personality, voice, secrets, relationships (static, goes in every prompt)
-- `traits`: plain-language lines derived from stats ("quick hands", "slow to notice things")
+- `self_image` (optional): `{"STR": "your knees ache and you move slowly", ...}`, the author's own wording for how the character sees an ability
+- `traits`: other plain-language lines about the character ("you love to talk")
 - `stats`: STR INT WIS DEX CON CHA. **Never** sent to a character prompt.
+
+Characters know themselves in plain words, not numbers. `rpg/selfimage.py` turns every ability outside the average band (9-12) into an "About yourself" line ("you are a bit clumsy", "you are sharp and learn quickly"), using the basic D&D bands 3 / 4-5 / 6-8 / 13-15 / 16-17 / 18. A `self_image` entry replaces the default line for that ability, and is shown even when the score is average. `traits` follow after.
 - `mode`: `agent` or `managed`
 - `location`
 - `beliefs`, `goals`: short lists the character can edit through its output

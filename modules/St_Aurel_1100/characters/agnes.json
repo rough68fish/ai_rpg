@@ -17,9 +17,11 @@
       "martha": "Best friend, though Martha can't keep a secret."
     }
   },
+  "self_image": {
+    "STR": "your back is stiff",
+    "WIS": "very little escapes your notice"
+  },
   "traits": [
-    "very little escapes your notice",
-    "your back is stiff",
     "you take a while to warm to strangers"
   ],
   "stats": {

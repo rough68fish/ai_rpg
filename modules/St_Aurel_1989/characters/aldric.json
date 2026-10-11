@@ -18,9 +18,11 @@
       "martha": "Kind to her, careful what he says near her."
     }
   },
+  "self_image": {
+    "STR": "your knees ache and you move slowly",
+    "WIS": "you notice more than you let on"
+  },
   "traits": [
-    "your knees ache and you move slowly",
-    "you notice more than you let on",
     "you are not a convincing liar"
   ],
   "stats": {

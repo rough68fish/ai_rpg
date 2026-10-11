@@ -72,7 +72,7 @@ CHARACTERS
 {for each character:}
 - {name} ({id}) | mode: {mode} | in: {location}
   stats: STR {STR} INT {INT} WIS {WIS} DEX {DEX} CON {CON} CHA {CHA}
-  traits: {traits}
+  sees itself as: {self-image lines, then traits}
   goals: {goals}
   carrying: {objects held}
 The player ("the traveller") is in: {player.location}
@@ -209,7 +209,7 @@ Where you live: {setting.known}
 
 Who you are: {identity.personality}
 How you speak: {identity.voice}
-About yourself: {traits as "- " lines}
+About yourself: {self-image lines from stats (rpg/selfimage.py), then traits, as "- " lines}
 
 What you know that others don't:
 {identity.secrets as "- " lines, or "nothing special"}
