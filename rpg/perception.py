@@ -160,9 +160,10 @@ def own_memory(state, event):
 
 # --- learning names --------------------------------------------------------
 # A name is learned by hearing it, each person for themselves: the speaker
-# introducing themselves ("my name is Karik"), or someone being called by name
-# while spoken to ("Steady yourself, Pip"). Only those in the room who made out
-# the words learn it, and they learn the name as it was said.
+# introducing themselves ("my name is Karik"), someone being called by name
+# while spoken to ("Steady yourself, Pip"), or someone in the room being
+# introduced ("this is Father Tomas"). Only those in the room who made out the
+# words learn it, and they learn the name as it was said.
 
 _NAME = r"(?=([\w'-]+(?:\s+[\w'-]+)?))"  # a lookahead, so "I'm afraid I am Bran" finds Bran
 # Phrases that can only be followed by a name, so "my name is karik" typed in
@@ -213,6 +214,42 @@ def _said_name(state, speech, aid):
     return None
 
 
+# Words that hand someone else's name to the listener: "this is Father Tomas",
+# "meet Pip", "her name is Agnes". Only counts when a name of someone in the
+# room follows, so "he is tired" teaches nothing.
+_PRESENTS = re.compile(r"\b(?:this is|that is|this here is|here is|here's|meet|his name is|"
+                       r"her name is|his name's|her name's|he is called|she is called|he's called|"
+                       r"she's called|he is|she is|he's|she's|named|"
+                       r"(?:may i|let me|allow me to) (?:present|introduce))\s+", re.IGNORECASE)
+
+
+def _name_at(state, text, aid):
+    """The name of `aid` if text starts with it (after an optional title), as
+    _said_name gives it; else None."""
+    titles = "|".join(re.escape(t) for t in sorted(S.titles(state), key=len, reverse=True))
+    for name in sorted(_names_of(state, aid), key=len, reverse=True):
+        m = re.match(rf"(?:(?:{titles})\s+)?{re.escape(name)}(?![\w-])", text, re.IGNORECASE)
+        if m:
+            said = m.group(0)
+            proper = next((n for n in _names_of(state, aid) if n.lower() == said.lower()), None)
+            return proper or name
+    return None
+
+
+def _presented(state, speech, actor, present):
+    """[(id, name)] for people in the room the speaker introduces to others."""
+    found = []
+    for m in _PRESENTS.finditer(speech):
+        rest = speech[m.end():]
+        for other in present:
+            if other == actor or any(o == other for o, _ in found):
+                continue
+            name = _name_at(state, rest, other)
+            if name:
+                found.append((other, name))
+    return found
+
+
 def names_heard(state, event):
     """[(id, name)] for every person whose name this event makes known to anyone
     in the room who hears the words."""
@@ -235,6 +272,7 @@ def names_heard(state, event):
         said = _said_name(state, speech, target)
         if said:
             found.append((target, said))
+    found += [p for p in _presented(state, speech, actor, others) if p[0] not in dict(found)]
     return found
 
 
