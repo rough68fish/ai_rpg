@@ -151,7 +151,8 @@ def apply(state, event, rng):
         perceptions_with_self = perceptions
     for obs, line in perceptions_with_self.items():
         S.actor(state, obs).setdefault("memory", []).append(
-            {"t": clock["turn"], "time": clock["time"], "text": line, "importance": imp})
+            {"t": clock["turn"], "time": clock["time"], "text": line, "importance": imp,
+             "by": event["actor"]})
     state["log"].append({"turn": clock["turn"], "time": clock["time"], "event": event,
                          "perceived_by": perceptions, "checks": checks})
     return perceptions, checks
@@ -166,7 +167,7 @@ def arrive(state, aid, from_room, rng):
     perceptions, checks = perceive(state, event, rng)
     for obs, line in perceptions.items():
         S.actor(state, obs).setdefault("memory", []).append(
-            {"t": clock["turn"], "time": clock["time"], "text": line, "importance": 3})
+            {"t": clock["turn"], "time": clock["time"], "text": line, "importance": 3, "by": aid})
     state["log"].append({"turn": clock["turn"], "time": clock["time"], "event": event,
                          "perceived_by": perceptions, "checks": checks})
     return perceptions, checks

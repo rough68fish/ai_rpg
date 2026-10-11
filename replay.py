@@ -5,7 +5,8 @@
     python replay.py runs/<run>/turn_002.json -o out.html --no-open
 
 Writes replay.html into the run folder and opens it in the browser. Toggles on
-the page show the GM's dice rolls and the events the traveller didn't perceive.
+the page show the GM's dice rolls, the raw events behind each narrated turn, and
+the events the traveller didn't perceive.
 """
 import argparse
 import html
@@ -82,39 +83,56 @@ def build(state, title):
     first_move = next((e["moved"] for e in log if e.get("moved", [None])[0] == S.PLAYER), None)
     start = first_move[1] if first_move else state["world"]["player"]["location"]
 
-    parts = [f'<div class="room"><b>{esc(start)}</b><span>{esc(rooms[start]["desc"])}</span></div>']
-    turn = None
+    def room_note(room):
+        return f'<div class="room"><b>{esc(room)}</b><span>{esc(rooms[room]["desc"])}</span></div>'
+
+    # Raw events per turn: what the traveller perceived, did, and (toggle) missed.
+    raw, times = {}, {}
     for i, entry in enumerate(log):
         e = entry["event"]
-        if entry["turn"] != turn:
-            turn = entry["turn"]
-            parts.append(f'<div class="turn">Turn {turn} · {esc(entry["time"])}</div>')
+        parts = raw.setdefault(entry["turn"], [])
+        times.setdefault(entry["turn"], entry["time"])
         mine = e["actor"] == S.PLAYER
         seen = entry["perceived_by"].get(S.PLAYER)
 
         if mine and entry.get("moved"):  # /move: show the room entered
-            room = entry["moved"][2]
-            parts.append(f'<div class="room"><b>{esc(room)}</b><span>{esc(rooms[room]["desc"])}</span></div>')
-            continue
-        if mine and e["text"].startswith("{player} comes in from"):
-            if i and log[i - 1].get("moved", [None])[0] == S.PLAYER:
-                continue  # already shown from the /move entry
-            room = e["room"]  # a GM-resolved move
-            parts.append(f'<div class="room"><b>{esc(room)}</b><span>{esc(rooms[room]["desc"])}</span></div>')
-            continue
-        if mine:
+            parts.append(room_note(entry["moved"][2]))
+        elif mine and e["text"].startswith("{player} comes in from"):
+            if not (i and log[i - 1].get("moved", [None])[0] == S.PLAYER):
+                parts.append(room_note(e["room"]))  # a GM-resolved move
+        elif mine:
             parts.append(roll_note(entry) + right(e))
-            continue
-        if seen:
+        elif seen:
             parts.append(perception_rolls(entry) + left(seen, e.get("speech")))
+        else:
+            # Not perceived: hidden unless the toggle is on. Shown with true names.
+            text = P.render(state, None, e["text"])
+            if e.get("speech"):
+                text += f' "{e["speech"]}"'
+            parts.append(f'<div class="unseen">{perception_rolls(entry)}{roll_note(entry)}'
+                         f'<div class="msg in"><div class="cap">{esc(e["actor"])} · {esc(e["room"])}'
+                         f'</div><div class="bubble ghost">{esc(text)}</div></div></div>')
+
+    # Played turns (stage 4) carry the typed input and the GM's narration.
+    told = {t["turn"]: t for t in state.get("turns", [])}
+    for t in told.values():
+        times.setdefault(t["turn"], t["time"])
+
+    parts = [room_note(start)]
+    for turn in sorted(set(raw) | set(told)):
+        t = told.get(turn)
+        where = f" · {esc(t['room'])}" if t and t.get("room") else ""
+        parts.append(f'<div class="turn">Turn {turn} · {esc(times[turn])}{where}</div>')
+        events = "\n".join(raw.get(turn, []))
+        if not t:
+            parts.append(events)
             continue
-        # Not perceived: hidden unless the toggle is on. Shown with true names.
-        text = P.render(state, None, e["text"])
-        if e.get("speech"):
-            text += f' "{e["speech"]}"'
-        parts.append(f'<div class="unseen">{perception_rolls(entry)}{roll_note(entry)}'
-                     f'<div class="msg in"><div class="cap">{esc(e["actor"])} · {esc(e["room"])}'
-                     f'</div><div class="bubble ghost">{esc(text)}</div></div></div>')
+        said = esc(t["input"]) if t["input"] else "(you wait)"
+        parts.append(f'<div class="msg out"><div class="bubble{"" if t["input"] else " narr"}">'
+                     f'{said}</div></div>')
+        parts += [roll_note(e) for e in log if e["turn"] == turn and e["event"]["actor"] == S.PLAYER]
+        parts.append(f'<div class="msg in story"><div class="bubble">{esc(t["narration"])}</div></div>')
+        parts.append(f'<div class="raw">{events}</div>')
 
     body = "\n".join(parts)
     return PAGE.replace("{{title}}", esc(title)).replace("{{body}}", body)
@@ -172,6 +190,11 @@ main { max-width: 720px; margin: 0 auto; padding: 16px; display: flex; flex-dire
   border-left: 3px solid var(--muted); padding: 2px 8px; max-width: 90%; }
 .roll.ok { border-color: var(--ok); } .roll.bad { border-color: var(--bad); }
 .unseen { display: none; flex-direction: column; gap: 3px; }
+.story { max-width: 88%; }
+.story .bubble { font-family: Georgia, "Times New Roman", serif; font-size: 16px; line-height: 1.55; }
+.raw { display: none; flex-direction: column; gap: 6px; margin: 4px 0 4px 14px; padding-left: 10px;
+  border-left: 2px dotted var(--line); }
+body.raw-on .raw { display: flex; }
 body:not(.rolls) .roll { display: none; }
 body.unseen-on .unseen { display: flex; }
 </style></head>
@@ -179,6 +202,7 @@ body.unseen-on .unseen { display: flex; }
 <header>
   <h1>{{title}}</h1>
   <label><input type="checkbox" id="rolls" checked> Dice rolls</label>
+  <label><input type="checkbox" id="raw"> Raw events</label>
   <label><input type="checkbox" id="unseen"> Events you didn't perceive</label>
 </header>
 <main>
@@ -192,6 +216,7 @@ const toggle = (id, cls) => {
 };
 toggle("rolls", "rolls");
 toggle("unseen", "unseen-on");
+toggle("raw", "raw-on");
 </script>
 </body></html>
 """

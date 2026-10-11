@@ -1,8 +1,11 @@
-"""Stage 1 REPL: no model calls. You type events by hand and inspect what each
-character perceived, remembers and would be prompted with."""
+"""The REPL. Plain text plays a full turn (stage 4); /commands drive each step by
+hand and inspect what each character perceived, remembers and is prompted with."""
+import io
 import json
 import shlex
+import sys
 import textwrap
+from contextlib import redirect_stdout
 
 from . import gm
 from . import llm
@@ -13,7 +16,11 @@ from . import state as S
 FIRST_PERSON = {"whisper": "whisper", "loud": "call out", "normal": "say"}
 
 HELP = """\
-Plain text            the traveller says it out loud (normal volume)
+Plain text            play a turn: the GM resolves what you do, characters with
+                      something new act, the GM narrates (--debug: just speech)
+/turn [text]          the same; with no text, you wait a minute
+/trace                full debug output of the last turn
+/verbose              show every step of a turn as it happens (toggle)
 /say <who> [whisper|loud] [@target] <words>
                       someone speaks; <who> is an id or 'player'
 /do <who> [subtle] [loud] [@target] <text>
@@ -39,9 +46,12 @@ Plain text            the traveller says it out loud (normal volume)
 
 
 class Game:
-    def __init__(self, state, run_dir, rng, client=None):
+    def __init__(self, state, run_dir, rng, client=None, debug=False):
         self.state, self.run_dir, self.rng = state, run_dir, rng
         self.llm = client or llm.Client()
+        self.debug = debug        # plain text is speech, not a turn
+        self.verbose = debug      # stream every step of a turn
+        self.last_trace = ""
 
     # --- helpers ---------------------------------------------------------
     def _id(self, who):
@@ -248,7 +258,7 @@ class Game:
         try:
             reply, stats = self.llm.chat(sysm, user, prompts.CHARACTER_SCHEMA, llm.TEMP_CHARACTER)
         except llm.LLMError as e:
-            print(f"  {e}")
+            print(f"  {cid}: {e}", file=sys.stderr)
             return
         clock = self.state["world"]["clock"]
         print(f"  ({stats['seconds']}s, {stats['prompt_tokens']} in / {stats['reply_tokens']} out)")
@@ -256,7 +266,7 @@ class Game:
         print(f"  mood:    {reply.get('mood')}")
         rec.setdefault("memory", []).append(
             {"t": clock["turn"], "time": clock["time"], "importance": 2,
-             "text": f"I thought: {reply.get('thought')} (I felt {reply.get('mood')})"})
+             "text": f"I thought: {reply.get('thought')} (I felt {reply.get('mood')})", "by": cid})
         self._edit_list(rec, "beliefs", reply.get("new_beliefs"), reply.get("drop_beliefs"))
         self._edit_list(rec, "goals", reply.get("new_goals"), reply.get("done_goals"))
 
@@ -273,6 +283,7 @@ class Game:
                  "target": tid, "target_text": reply.get("target")})
         # Everything up to here (perceptions, its thought, its own speech) is now old.
         rec["memories_seen"] = len(rec["memory"])
+        rec["last_acted_turn"] = clock["turn"]
 
     @staticmethod
     def _edit_list(rec, key, add, drop):
@@ -293,7 +304,7 @@ class Game:
         try:
             reports, stats = gm.resolve(self.state, intents, self.llm, self.rng, tick)
         except llm.LLMError as e:
-            print(f"  {e}")
+            print(f"  GM: {e}", file=sys.stderr)
             return False
         print(f"  (GM {stats['seconds']}s, {stats['prompt_tokens']} in / {stats['reply_tokens']} out,"
               f" {len(reports)} events)")
@@ -333,6 +344,74 @@ class Game:
         if self._gm(intents, tick):
             self.state["pending"] = []
 
+    # --- the full turn (framework.md, Turn loop) -------------------------------
+    IDLE_TURNS = 3  # an agent with no news still acts this often, so the scene moves
+
+    def _has_news(self, cid):
+        """Something from someone else since this character last acted."""
+        rec = self.state["chars"][cid]
+        return any(m.get("by") != cid for m in rec.get("memory", [])[prompts.seen_count(rec):])
+
+    def _who_acts(self):
+        """Agents with news, or idle too long. Those in the traveller's room go
+        first, so a reply can answer what was just said."""
+        turn = self.state["world"]["clock"]["turn"]
+        here = S.location(self.state, S.PLAYER)
+        acting = [cid for cid, rec in self.state["chars"].items() if rec["mode"] == "agent"
+                  and (self._has_news(cid) or turn - rec.get("last_acted_turn", -1) >= self.IDLE_TURNS)]
+        return sorted(acting, key=lambda cid: S.location(self.state, cid) != here)
+
+    def turn(self, text=""):
+        player = S.actor(self.state, S.PLAYER)
+        start = len(player.setdefault("memory", []))
+        clock = self.state["world"]["clock"]
+        out = sys.stdout
+
+        def step(msg):
+            print(f"  ... {msg}", file=out, flush=True)
+
+        trace = io.StringIO()
+        with redirect_stdout(sys.stdout if self.verbose else trace):
+            if text:
+                step("the GM resolves what you do")
+                print(f"\n== you: {text}")
+                self._gm([{"actor": S.PLAYER, "action": text}])
+            for cid in self._who_acts():
+                step(f"{S.short(self.state, cid)} acts")
+                print(f"\n== {cid} acts")
+                self.act(cid)
+            tick = [cid for cid, rec in self.state["chars"].items() if rec["mode"] == "managed"]
+            if self.state.get("pending") or tick:
+                step("the GM resolves everyone else")
+                print("\n== GM resolves")
+                if self._gm(self.state.get("pending", []), tick):
+                    self.state["pending"] = []
+        self.last_trace = trace.getvalue()
+
+        lines = [m["text"] for m in player["memory"][start:]]
+        step("the GM narrates")
+        try:
+            prose, stats = gm.narrate(self.state, lines, self.llm)
+        except llm.LLMError as e:
+            print(f"  GM: {e}", file=sys.stderr)
+            prose = " ".join(lines) or "Nothing happens."
+        prose = " ".join(prose.split())
+        problems = prompts.check_leakage(self.state, S.PLAYER, prose)
+        if problems:
+            print("  NARRATION LEAKAGE: " + "; ".join(problems), file=sys.stderr)
+        print("\n" + textwrap.fill(prose, 78, initial_indent="  ", subsequent_indent="  ") + "\n")
+        self.state.setdefault("turns", []).append(
+            {"turn": clock["turn"], "time": clock["time"], "input": text, "narration": prose,
+             "room": S.location(self.state, S.PLAYER), "perceived": lines})
+        self.next_turn()
+
+    def trace(self):
+        print(self.last_trace or "  no turn played yet")
+
+    def toggle_verbose(self):
+        self.verbose = not self.verbose
+        print(f"  verbose {'on' if self.verbose else 'off'}")
+
     def pending(self):
         for p in self.state.get("pending", []):
             print(f"  [{p['turn']}] {p['actor']}: {p['action']}"
@@ -355,7 +434,10 @@ class Game:
         if not line:
             return True
         if not line.startswith("/"):
-            self.say("player", line.split())
+            if self.debug:
+                self.say("player", line.split())
+            else:
+                self.turn(line)
             return True
         try:
             parts = shlex.split(line[1:]) if '"' in line else line[1:].split()
@@ -378,6 +460,9 @@ class Game:
             "act": lambda: self.act(*args),
             "pending": self.pending,
             "try": lambda: self.try_(rest),
+            "turn": lambda: self.turn(rest),
+            "trace": self.trace,
+            "verbose": self.toggle_verbose,
             "resolve": self.resolve,
             "know": lambda: self.know(*args),
             "promote": lambda: self.set_mode(args[0], "agent"),

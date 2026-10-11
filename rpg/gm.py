@@ -56,7 +56,9 @@ Answer only with JSON in the requested format."""
 
 TASK = """Resolve every intent in order, then give each character listed under
 MANAGED CHARACTERS TO TICK one small action (none if the list is empty).
-Return events, usually one per intent.
+If someone spoke to a managed character in RECENT EVENTS and they heard it,
+that action is their spoken reply, in their own voice and using only what
+they know. Return events, usually one per intent.
 
 - An event is what its actor does and says, and how that turns out. If the
   intent includes speaking, put the actor's exact words in "speech" and the
@@ -396,3 +398,39 @@ def resolve(state, intents, client, rng, tick=()):
                                RESOLVE_SCHEMA, llm.TEMP_RESOLVE)
     events = reply.get("events") or []
     return [play_event(state, raw, rng) for raw in events], stats
+
+
+# --- narrate -------------------------------------------------------------------
+
+NARRATE_SCHEMA = {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}
+
+
+def narrate_message(state, lines):
+    """prompts.md section 3. Built only from what the traveller perceived, so it
+    carries no ground truth; the GM system prompt itself holds none either."""
+    player = state["world"]["player"]
+    room = player["location"]
+    visible = [f"{S.name_for(state, S.PLAYER, o)} ({S.appearance(state, o)})"
+               if S.knows(state, S.PLAYER, o) else S.appearance(state, o)
+               for o in S.in_room(state, room) if o != S.PLAYER]
+    known = [S.short(state, o) for o in player.get("known", [])]
+    return f"""Write what the traveller experiences this turn, in second person, present
+tense. Use ONLY these events, which are the ones the traveller perceived.
+Do not add facts, objects or motives that are not in them. Describe people by
+how they look and sound unless the traveller has learned their name.
+
+Where the traveller is: the {room}. {state['world']['rooms'][room]['desc']}
+Who the traveller can see: {', '.join(visible) or 'nobody'}
+Names the traveller knows: {', '.join(known) or 'none'}
+
+Perceived events (the traveller's own memory, "I" is the traveller):
+{_bullets(lines, 'nothing happens')}
+
+Write 2 to 6 sentences. End by quoting anything said directly to the
+traveller. Do not ask the player what they do next."""
+
+
+def narrate(state, lines, client):
+    """Returns (prose, stats)."""
+    reply, stats = client.chat(SYSTEM, narrate_message(state, lines), NARRATE_SCHEMA, llm.TEMP_CHARACTER)
+    return reply.get("text", "").strip(), stats

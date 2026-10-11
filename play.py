@@ -1,4 +1,4 @@
-"""Church scene prototype, stage 2: python play.py [--seed N] [--model NAME]"""
+"""Church scene prototype: python play.py [--seed N] [--model NAME] [--debug]"""
 import argparse
 from pathlib import Path
 
@@ -16,11 +16,14 @@ def main():
     ap.add_argument("--resume", help="path to a turn_NNN.json snapshot")
     ap.add_argument("--model", default=llm.DEFAULT_MODEL, help="Ollama model for /act")
     ap.add_argument("--ollama", default=llm.DEFAULT_URL, help="Ollama base URL")
+    ap.add_argument("--debug", action="store_true",
+                    help="plain text is speech instead of a full turn, and turns show every step")
     args = ap.parse_args()
 
     state = S.load_snapshot(args.resume) if args.resume else S.load_scene(args.scene)
     run_dir = S.new_run_dir(HERE / "runs")
-    game = Game(state, run_dir, S.make_rng(args.seed), llm.Client(args.model, args.ollama))
+    game = Game(state, run_dir, S.make_rng(args.seed), llm.Client(args.model, args.ollama),
+                debug=args.debug)
     print(f"St. Aurel's, {state['world']['clock']['time']}. Model {args.model}. "
           f"Saving to {run_dir}. /help for commands.")
     game.look()
