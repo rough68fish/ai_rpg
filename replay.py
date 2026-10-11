@@ -77,7 +77,7 @@ def right(event):
     return f'<div class="msg out">{"".join(out)}</div>' if out else ""
 
 
-def build(state, title):
+def build(state, title, live=0):
     rooms = state["world"]["rooms"]
     log = state["log"]
     first_move = next((e["moved"] for e in log if e.get("moved", [None])[0] == S.PLAYER), None)
@@ -136,7 +136,13 @@ def build(state, title):
         parts.append(f'<div class="raw">{events}</div>')
 
     body = "\n".join(parts)
-    return PAGE.replace("{{title}}", esc(title)).replace("{{body}}", body)
+    page = PAGE.replace("{{title}}", esc(title)).replace("{{body}}", body)
+    if live:
+        # Re-read the file every few seconds and stay pinned to the newest turn.
+        page = page.replace('<meta charset="utf-8">',
+                            f'<meta charset="utf-8">\n<meta http-equiv="refresh" content="{live}">')
+        page = page.replace("/*LIVE*/", "window.scrollTo(0, document.body.scrollHeight);")
+    return page
 
 
 PAGE = """<!doctype html>
@@ -212,9 +218,15 @@ body.unseen-on .unseen { display: flex; }
 <script>
 const toggle = (id, cls) => {
   const box = document.getElementById(id);
-  const apply = () => document.body.classList.toggle(cls, box.checked);
+  // Remembered, so a live page keeps your toggles across refreshes.
+  try { const v = localStorage.getItem("replay-" + id); if (v !== null) box.checked = v === "1"; } catch (e) {}
+  const apply = () => {
+    document.body.classList.toggle(cls, box.checked);
+    try { localStorage.setItem("replay-" + id, box.checked ? "1" : "0"); } catch (e) {}
+  };
   box.addEventListener("change", apply); apply();
 };
+/*LIVE*/
 toggle("rolls", "rolls");
 toggle("unseen", "unseen-on");
 toggle("raw", "raw-on");
@@ -228,13 +240,15 @@ def main():
     ap.add_argument("run", nargs="?", help="run folder or turn_NNN.json (default: latest run)")
     ap.add_argument("-o", "--out", help="output file (default: replay.html in the run folder)")
     ap.add_argument("--no-open", action="store_true", help="don't open the browser")
+    ap.add_argument("--live", type=int, nargs="?", const=4, default=0, metavar="SECONDS",
+                    help="page reloads itself (default every 4 s) and follows the newest turn")
     args = ap.parse_args()
 
     snap = find_snapshot(args.run)
     state = S.load_snapshot(snap)
     title = f"St. Aurel's · run {snap.parent.name}"
     out = Path(args.out) if args.out else snap.parent / "replay.html"
-    out.write_text(build(state, title), encoding="utf-8")
+    out.write_text(build(state, title, args.live), encoding="utf-8")
     print(f"{len(state['log'])} events from {snap} -> {out}")
     if not args.no_open:
         webbrowser.open(out.resolve().as_uri())

@@ -367,12 +367,12 @@ class Game:
     def _player_intent(self, text):
         """The typed line, split into what the traveller does and says."""
         try:
-            does, says = gm.split_line(text, self.llm)
+            split = gm.split_line(self.state, text, self.llm)
         except llm.LLMError as e:
             print(f"  split: {e}", file=sys.stderr)
-            does = says = None
-        print(f"  split: does={does!r} says={says!r}")
-        return {"actor": S.PLAYER, "action": text, "does": does, "says": says}
+            split = {}
+        print(f"  split: {split}")
+        return {"actor": S.PLAYER, "action": text, **split}
 
     def resolve(self):
         intents = self.state.get("pending", [])

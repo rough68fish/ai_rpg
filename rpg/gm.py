@@ -413,10 +413,12 @@ def _flat(text):
     return re.sub(r"\W", "", text.lower())
 
 
-def play_event(state, raw, rng, says=None):
+def play_event(state, raw, rng, says=None, volume=None, defer=False):
     """Roll, keep one branch, perceive it, apply its changes. Returns a report.
     `says` is the traveller's own words, which the event carries whatever the
-    GM wrote (speaking can't fail; what it achieves can)."""
+    GM wrote (speaking can't fail; what it achieves can). With `defer`, the
+    traveller is also walking somewhere: the words are kept out of this event
+    and said on arrival (see resolve)."""
     actor = _to_id(state, raw.get("actor")) or WORLD
     report = {"actor": actor, "check": None, "branch": "success", "other": None}
     check = raw.get("check") if isinstance(raw.get("check"), dict) else None
@@ -438,7 +440,23 @@ def play_event(state, raw, rng, says=None):
         out, report["other"] = succ, fail.get("text") if fail else None
 
     event = _event(state, actor, out)
-    if says:
+    if says and defer:
+        report["deferred"] = {"says": says, "volume": volume, "target": event["target"]}
+        core = says.rstrip(".!? ")
+        # Whatever words the GM put in the walking event (quoted, or verbatim)
+        # belong to the arrival, not the room being left.
+        text = re.sub(r',?\s*(?:and\s+)?(?:saying|says|said)?:?\s*["“][^"”]*["”]', "",
+                      event["text"])
+        at = text.lower().find(core.lower())
+        if core and at >= 0:
+            text = text[:at]
+        event["text"] = text.rstrip(' ,:"“') + "."
+        event.update(speech=None, target=None)
+        if event["volume"] in ("whisper", "normal"):
+            event["volume"] = "silent"
+        if event.get("actor_text") and _flat(core) in _flat(event["actor_text"]):
+            event["actor_text"] = None  # the words get their own memory line
+    elif says:
         if not event["speech"]:
             # The GM's volume described a gesture, not these words.
             report["note"] = "traveller's words restored"
@@ -448,6 +466,8 @@ def play_event(state, raw, rng, says=None):
         event["speech"] = says
         if event["volume"] == "silent":
             event["volume"] = "normal"
+        if volume:  # how the player said to say it
+            event["volume"] = volume
         # The words now live in "speech"; take any copy out of the text so
         # listeners don't hear them twice, and make sure the traveller's own
         # memory has them exactly once.
@@ -491,18 +511,57 @@ def resolve(state, intents, client, rng, tick=()):
                                RESOLVE_SCHEMA, llm.TEMP_RESOLVE)
     events = reply.get("events") or []
     says = next((it["says"] for it in intents if it["actor"] == S.PLAYER and it.get("says")), None)
+    volume = next((it.get("volume") for it in intents if it["actor"] == S.PLAYER and it.get("says")), None)
     if says and not any(_to_id(state, e.get("actor")) == S.PLAYER for e in events):
         # The GM skipped the traveller entirely; they still said it.
         events.insert(0, {"actor": S.PLAYER, "check": None, "success": {
             "text": "{player} says:", "room": S.location(state, S.PLAYER), "volume": "normal",
             "subtle": False, "actor_text": ""}})
+    goes = next((it["goes_to"] for it in intents if it["actor"] == S.PLAYER and it.get("goes_to")), None)
     reports = []
     for raw in events:
         first_player = says and _to_id(state, raw.get("actor")) == S.PLAYER
-        reports.append(play_event(state, raw, rng, says if first_player else None))
+        reports.append(play_event(state, raw, rng, *((says, volume, bool(goes)) if first_player else ())))
         if first_player:
             says = None
+    moved = any(c["ok"] and c["cmd"].lower().startswith("move player")
+                for r in reports for c in r["changes"])
+    if goes and not moved and S.location(state, S.PLAYER) != goes:
+        # The GM described the walk but didn't move anyone; the traveller still went.
+        mine = next((r for r in reports if r["actor"] == S.PLAYER), None)
+        ok, msg, arrival = apply_change(state, S.PLAYER, f"move player {goes}", rng)
+        change = {"cmd": f"move player {goes}", "ok": ok, "msg": msg + " (from the typed line)",
+                  "arrival": arrival}
+        if mine:
+            mine["changes"].append(change)
+        if not ok:
+            clock = state["world"]["clock"]
+            S.actor(state, S.PLAYER)["memory"].append(
+                {"t": clock["turn"], "time": clock["time"], "importance": 4, "by": S.PLAYER,
+                 "text": f"I could not get there ({msg}); I am still in the {S.location(state, S.PLAYER)}."})
+    later = next((r.pop("deferred") for r in reports if r.get("deferred")), None)
+    if later:
+        reports.append(_say_on_arrival(state, later, rng))
     return reports, stats
+
+
+def _say_on_arrival(state, said, rng):
+    """The traveller walked and talked: the words are said where they ended up."""
+    here = S.location(state, S.PLAYER)
+    tid = said["target"] if said["target"] and S.location(state, said["target"]) == here else None
+    vol = said["volume"] or "normal"
+    verb = {"whisper": "whispers", "loud": "calls out"}.get(vol, "says")
+    to = f" to {{{tid}}}" if tid else ""
+    to_me = f" to {S.name_for(state, S.PLAYER, tid)}" if tid else ""
+    first = {"whisper": "whisper", "loud": "call out"}.get(vol, "say")
+    event = {"actor": S.PLAYER, "room": here, "text": f"{{player}} {verb}{to}:", "speech": said["says"],
+             "volume": vol, "subtle": False, "target": tid, "importance": 4,
+             "actor_text": f'I {first}{to_me}: "{said["says"]}"'}
+    perceptions, checks = P.apply(state, event, rng)
+    state["log"][-1]["gm"] = True
+    return {"actor": S.PLAYER, "check": None, "branch": "success", "other": None, "event": event,
+            "perceptions": perceptions, "checks": checks, "changes": [],
+            "note": "said on arrival"}
 
 
 # --- narrate -------------------------------------------------------------------
@@ -560,7 +619,7 @@ def narrate(state, lines, client):
 SPLIT_SCHEMA = {
     "type": "object",
     "properties": {"does": {"type": ["string", "null"]}, "says": {"type": ["string", "null"]}},
-    "required": ["does", "says"],
+    "required": ["does", "says", "goes_to"],
 }
 
 SPLIT_PROMPT = """A player typed this line for their character, the traveller, in a text
@@ -574,15 +633,33 @@ exact words the traveller says out loud.
   you worked here?". Otherwise keep the player's wording.
 - "does" is only the physical part, e.g. "walks to the front pew". Leave out
   the speaking itself.
+- "volume": how the words are said: "whisper", "normal", or "loud" (shouting,
+  calling out, saying it loudly or clearly to someone hard of hearing).
+- "goes_to": if the traveller moves to a different room this turn, the room
+  they end up in; otherwise null. Rooms, with what is in them:
+{rooms}
+  The traveller is now in the {here}.
 - Use null for a part that is missing.
 
 The line: "{line}\""""
 
 
-def split_line(line, client):
-    """(does, says) for the traveller's typed line. Speech is then guaranteed to
-    reach the event, whatever the GM does with it."""
+def split_line(state, line, client):
+    """does, says, goes_to and volume for the traveller's typed line. Speech and movement
+    are then guaranteed to happen, whatever the GM does with them."""
+    rooms = state["world"]["rooms"]
+    schema = {**SPLIT_SCHEMA, "properties": {**SPLIT_SCHEMA["properties"],
+                                             "goes_to": {"enum": list(rooms) + [None]},
+                                             "volume": {"enum": ["whisper", "normal", "loud"]}}}
+    room_lines = "\n".join(f"  - {r}: {d['desc']}" for r, d in rooms.items())
+    prompt = (SPLIT_PROMPT.replace("{rooms}", room_lines)
+              .replace("{here}", S.location(state, S.PLAYER))
+              .replace("{line}", line.replace('"', "'")))
     reply, _ = client.chat("You split player input for a game engine. Answer only with JSON.",
-                           SPLIT_PROMPT.replace("{line}", line.replace('"', "'")),
-                           SPLIT_SCHEMA, 0.2)
-    return (reply.get("does") or None), (reply.get("says") or None)
+                           prompt, schema, 0.2)
+    goes = reply.get("goes_to")
+    if goes == S.location(state, S.PLAYER) or goes not in rooms:
+        goes = None
+    volume = reply.get("volume") if reply.get("volume") in ("whisper", "loud") else "normal"
+    return {"does": reply.get("does") or None, "says": reply.get("says") or None,
+            "goes_to": goes, "volume": volume}

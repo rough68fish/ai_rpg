@@ -14,6 +14,7 @@ python play.py --seed 3                 # repeatable dice
 python play.py --model gemma4:26b       # or set RPG_MODEL; --ollama / OLLAMA_URL for the server
 python play.py --debug                  # plain text is just speech; drive each step by hand
 python play.py --resume runs/<run>/turn_004.json
+python play.py --continue runs/<run>       # carry on a run, saving into the same folder
 python replay.py                        # view the latest run as a chat
 ```
 
@@ -80,6 +81,7 @@ Every `/next` (and `/quit`) saves the full state to `runs/<timestamp>/turn_NNN.j
 python replay.py                          # latest run, opens in the browser
 python replay.py runs/20261010-215635     # a run folder
 python replay.py runs/<run>/turn_002.json -o out.html --no-open
+python replay.py runs/<run> --live          # page reloads itself and follows the newest turn
 ```
 
 `replay.py` writes `replay.html` into the run folder: a chat view of what the traveller experienced. For played turns, what you typed is on the right and the GM's narration on the left. For turns driven by hand, the left shows what the traveller heard and saw, captioned with how they know the speaker. Turn dividers and room notes mark time and place. Toggles show the dice rolls, the raw events behind each narrated turn, and, as faded bubbles, the events the traveller didn't perceive.

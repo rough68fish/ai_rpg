@@ -15,7 +15,7 @@ Rules (see framework.md):
   same room      see actions, hear normal and loud speech
   adjacent room  hear loud speech and noises, without seeing who
   whisper        target hears; others in the room need a WIS -4 check for the words
-  subtle         others in the room need a WIS check to notice at all
+  subtle         others in the room (not the target) need a WIS check to notice at all
   hearing mods   e.g. Martha's -4 add a WIS check to every hearing
 """
 import re
@@ -25,6 +25,7 @@ from . import state as S
 # WIS modifiers for perception checks. Easy hearing is automatic for normal
 # ears and only rolled for someone with a hearing penalty.
 HEAR_SAME_ROOM = 6
+HEAR_LOUD_SAME_ROOM = 10  # raised voices are hard to miss, even for poor ears
 HEAR_WHISPER_TARGET = 4
 HEAR_WHISPER_OVERHEAR = -4
 HEAR_ADJACENT_LOUD = 2
@@ -103,7 +104,7 @@ def perceive(state, event, rng):
         line = None
 
         if here:
-            if subtle:
+            if subtle and obs != target:  # whoever it is aimed at always notices
                 c = S.roll_under(state, obs, "WIS", NOTICE_SUBTLE, rng)
                 c["why"] = "notice subtle"
                 checks.append(c)
@@ -118,7 +119,7 @@ def perceive(state, event, rng):
                     else:
                         line = f"{seen} I can't make out the words."
                 else:
-                    base = HEAR_WHISPER_TARGET if volume == "whisper" else HEAR_SAME_ROOM
+                    base = {"whisper": HEAR_WHISPER_TARGET, "loud": HEAR_LOUD_SAME_ROOM}.get(volume, HEAR_SAME_ROOM)
                     if _hears(state, obs, base, True, rng, checks):
                         line = f'{seen} "{speech}"'
                     else:
