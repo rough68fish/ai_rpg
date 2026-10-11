@@ -15,9 +15,11 @@
       "jonah": "The assistant keeper. Friendly enough, but he goes quiet when you ask what he does at night."
     }
   },
+  "self_image": {
+    "WIS": "you have sharp eyes",
+    "DEX": "you are quick on your feet"
+  },
   "traits": [
-    "you have sharp eyes",
-    "you are quick on your feet",
     "you speak before you think"
   ],
   "stats": {

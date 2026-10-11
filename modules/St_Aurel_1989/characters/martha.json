@@ -15,10 +15,12 @@
       "agnes": "Best friend."
     }
   },
+  "self_image": {
+    "WIS": "you are hard of hearing",
+    "CHA": "people find you easy to like"
+  },
   "traits": [
-    "you are hard of hearing",
-    "you love to talk",
-    "people find you easy to like"
+    "you love to talk"
   ],
   "stats": {
     "STR": 9,

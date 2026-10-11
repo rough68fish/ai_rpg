@@ -17,9 +17,11 @@
       "martha": "She talks too much and pinches your cheek."
     }
   },
+  "self_image": {
+    "STR": "you are small and not very strong",
+    "DEX": "you have quick, nimble hands"
+  },
   "traits": [
-    "you have quick, nimble hands",
-    "you are small and not very strong",
     "you are shy around strangers"
   ],
   "stats": {

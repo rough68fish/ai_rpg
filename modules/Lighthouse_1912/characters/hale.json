@@ -15,11 +15,12 @@
       "jonah": "Your assistant keeper. Reliable, you think, and a hard worker."
     }
   },
-  "traits": [
-    "you are tough and used to hard work",
-    "you are bone-tired and slow to notice things",
-    "you come across as cold to strangers"
-  ],
+  "self_image": {
+    "CON": "you are tough and used to hard work",
+    "WIS": "you are bone-tired and slow to notice things",
+    "CHA": "you come across as cold to strangers"
+  },
+  "traits": [],
   "stats": {
     "STR": 13,
     "INT": 11,

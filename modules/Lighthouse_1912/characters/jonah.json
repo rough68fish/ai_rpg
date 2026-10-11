@@ -16,9 +16,11 @@
       "nell": "Too nosy by half. You keep her sweet with jokes."
     }
   },
+  "self_image": {
+    "DEX": "you have quick, clever hands",
+    "CHA": "you are a smooth talker"
+  },
   "traits": [
-    "you have quick, clever hands",
-    "you are a smooth talker",
     "you are strong from hauling oil"
   ],
   "stats": {

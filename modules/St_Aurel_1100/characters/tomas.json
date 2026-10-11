@@ -18,11 +18,12 @@
       "martha": "Enjoys her gossip; she is a source of rumors."
     }
   },
-  "traits": [
-    "people warm to you quickly",
-    "you are strong and fit",
-    "you are impatient and miss small details"
-  ],
+  "self_image": {
+    "CON": "you are strong and fit",
+    "WIS": "you are impatient and miss small details",
+    "CHA": "people warm to you quickly"
+  },
+  "traits": [],
   "stats": {
     "STR": 12,
     "INT": 13,

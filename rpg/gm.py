@@ -9,6 +9,7 @@ import re
 
 from . import llm
 from . import perception as P
+from . import selfimage
 from . import state as S
 
 ABILITIES = ("STR", "INT", "WIS", "DEX", "CON", "CHA")
@@ -178,7 +179,7 @@ def resolve_message(state, intents, tick=()):
         chars.append(
             f"{rec['identity']['name']} ({cid}) | mode: {rec['mode']} | in: {rec['location']}\n"
             f"  stats: {' '.join(f'{a} {st[a]}' for a in ABILITIES)}\n"
-            f"  traits: {'; '.join(rec.get('traits', []))}\n"
+            f"  sees itself as: {'; '.join(selfimage.about_yourself(rec))}\n"
             f"  goals: {'; '.join(rec.get('goals', [])) or 'none'}\n"
             f"  carrying: {', '.join(S.carrying(state, cid)) or 'nothing'}")
     player = w["player"]

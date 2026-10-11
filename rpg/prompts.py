@@ -3,6 +3,7 @@
 Nothing here reads world truth, hidden objects or stats, and check_leakage()
 asserts that none of them slipped in.
 """
+from . import selfimage
 from . import state as S
 
 MAX_MEMORIES = 15
@@ -52,7 +53,7 @@ Where you live: {S.setting(state, 'known') or 'a small village'}
 Who you are: {idn['personality']}
 How you speak: {idn['voice']}
 About yourself:
-{_bullets(rec.get('traits', []))}
+{_bullets(selfimage.about_yourself(rec))}
 
 What you know that others don't:
 {_bullets(idn.get('secrets', []), 'nothing special')}
