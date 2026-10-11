@@ -90,7 +90,7 @@ happen. Commands:
   drop <object>         the holder puts it down in the room they are in
   unlock <door>         the actor must hold the door's key; also: lock <door>
   reveal <object>       a hidden object is found; the actor must be in its room
-  know <id> <id>        the first learns the second's name, e.g. after an introduction
+Names need no command: whoever hears a name said learns it.
 Examples, with <...> standing for the real ids from WORLD STATE: "I take the
 book" -> ["give <book id> player"]; "I go back to the hall" -> ["move player
 <hall id>"]; "{<id>} pockets the key he was handed" -> ["give <key id> <id>"].
@@ -183,7 +183,7 @@ def resolve_message(state, intents, tick=()):
             f"  goals: {'; '.join(rec.get('goals', [])) or 'none'}\n"
             f"  carrying: {', '.join(S.carrying(state, cid)) or 'nothing'}")
     player = w["player"]
-    known = ", ".join(player.get("known", [])) or "nobody"
+    known = ", ".join(S.known_names(player)) or "nobody"
 
     turn = w["clock"]["turn"]
     recent = [describe_event(e) for e in state["log"] if e["turn"] >= turn - 2]
@@ -239,8 +239,9 @@ def _pc(state, text):
 def _name_patterns(state):
     """(regex, id) pairs that turn names the GM wrote out back into {id}, so each
     observer still sees only the names they know. Longest names first."""
-    pc = S.player_name(state)
-    pairs = [(pc, S.PLAYER), (pc[:1].upper() + pc[1:], S.PLAYER)]
+    pairs = []
+    for pc in {S.player_name(state), state["world"]["player"].get("short", "")} - {""}:
+        pairs += [(pc, S.PLAYER), (pc[:1].upper() + pc[1:], S.PLAYER)]
     for cid, rec in state["chars"].items():
         idn = rec["identity"]
         names = {idn["name"], idn["short"], idn["short"].split()[-1]}
@@ -325,13 +326,6 @@ def _door(state, name):
     return (flipped, doors[flipped]) if flipped in doors else (name, None)
 
 
-def _spoken_names(state, cid):
-    """Ways someone's name can be said aloud: "Pip (Philip)" -> "Pip", "Philip"."""
-    idn = state["chars"][cid]["identity"]
-    words = idn["name"].replace("(", " ").replace(")", " ").split() + idn["short"].split()
-    return {w for w in words if w not in S.titles(state)} | {idn["short"]}
-
-
 def apply_change(state, actor, cmd, rng, event=None):
     """Validate and apply one state change. Returns (ok, message, arrival or None).
     `event` is the event the change came with, for checks that depend on it."""
@@ -405,23 +399,6 @@ def apply_change(state, actor, cmd, rng, event=None):
             objs[oid]["hidden"] = False
             return True, f"{oid} revealed", None
 
-        if verb == "know":
-            who, whom = _to_id(state, args[0]), _to_id(state, args[1])
-            if not who or not whom or S.location(state, who) != S.location(state, whom):
-                return False, "unknown people, or not in the same room", None
-            # A name is learned by hearing it said in this event. The traveller has
-            # no modelled name, so any speech of theirs can be an introduction.
-            speech = (event or {}).get("speech") or ""
-            if whom == S.PLAYER:
-                heard = bool(speech) and event.get("actor") == S.PLAYER
-            else:
-                heard = any(n.lower() in speech.lower() for n in _spoken_names(state, whom))
-            if not heard:
-                return False, f"nobody said {whom}'s name", None
-            known = S.actor(state, who).setdefault("known", [])
-            if whom not in known:
-                known.append(whom)
-            return True, f"{who} knows {whom}", None
     except IndexError:
         return False, "missing arguments", None
     return False, f"unknown command '{verb}'", None
@@ -629,7 +606,7 @@ def narrate_message(state, lines):
     visible = [f"{S.name_for(state, S.PLAYER, o)} ({S.appearance(state, o)})"
                if S.knows(state, S.PLAYER, o) else S.appearance(state, o)
                for o in S.in_room(state, room) if o != S.PLAYER]
-    known = [S.short(state, o) for o in player.get("known", [])]
+    known = [S.name_for(state, S.PLAYER, o) for o in S.known_names(player)]
     return _pc(state, f"""Write what the traveller experiences this turn, in second person, present
 tense. Use ONLY these events, which are the ones the traveller perceived.
 Do not add facts, objects or motives that are not in them. Describe people by

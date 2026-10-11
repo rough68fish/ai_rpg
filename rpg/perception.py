@@ -158,6 +158,90 @@ def own_memory(state, event):
     return own
 
 
+# --- learning names --------------------------------------------------------
+# A name is learned by hearing it, each person for themselves: the speaker
+# introducing themselves ("my name is Karik"), or someone being called by name
+# while spoken to ("Steady yourself, Pip"). Only those in the room who made out
+# the words learn it, and they learn the name as it was said.
+
+_NAME = r"(?=([\w'-]+(?:\s+[\w'-]+)?))"  # a lookahead, so "I'm afraid I am Bran" finds Bran
+# Phrases that can only be followed by a name, so "my name is karik" typed in
+# lower case still counts; and "I am"/"I'm", which only count before a capital.
+_INTRO_SURE = re.compile(r"\b(?:my name is|my name's|call me|they call me|i am called|i'm called)\s+"
+                         + _NAME, re.IGNORECASE)
+_INTRO_MAYBE = re.compile(r"\b(?:i am|i'm)\s+" + _NAME, re.IGNORECASE)
+# Words after "I am" that are not names ("I am Sorry", "I'm Not sure").
+_NOT_NAMES = {"i", "a", "an", "the", "not", "so", "sorry", "afraid", "here", "just", "sure",
+              "fine", "well", "glad", "only", "but", "and", "no", "yes", "from", "your", "his",
+              "her", "on", "in", "at", "to", "of", "going", "come", "looking", "told", "called"}
+
+
+def _introduced_name(state, speech):
+    """The name a speaker gives for themselves, e.g. "Karik" or "Father Tomas"."""
+    for pattern, sure in ((_INTRO_SURE, True), (_INTRO_MAYBE, False)):
+        for m in pattern.finditer(speech):
+            words = m.group(1).split()
+            if words[0].lower() in _NOT_NAMES or not (sure or words[0][0].isupper()):
+                continue
+            if len(words) == 2 and (words[1].lower() in _NOT_NAMES
+                                    or not words[1][0].isupper() and words[0] not in S.titles(state)):
+                words = words[:1]  # "Karik from the north"
+            return " ".join(w[:1].upper() + w[1:] for w in words)
+    return None
+
+
+def _names_of(state, aid):
+    """Ways a person's name can be said aloud."""
+    if aid == S.PLAYER:
+        p = state["world"]["player"]
+        return {p["name"]} if p.get("name") and p.get("name") != p.get("short") else set()
+    idn = state["chars"][aid]["identity"]
+    words = idn["name"].replace("(", " ").replace(")", " ").split() + idn["short"].split()
+    return {w for w in words if w not in S.titles(state)} | {idn["short"], idn["name"]}
+
+
+def _said_name(state, speech, aid):
+    """The name of `aid` as it was said in speech, with any title before it
+    ("Father Aldric"), or None."""
+    titles = "|".join(re.escape(t) for t in sorted(S.titles(state), key=len, reverse=True))
+    for name in sorted(_names_of(state, aid), key=len, reverse=True):
+        m = re.search(rf"(?:\b(?:{titles})\s+)?(?<![\w-]){re.escape(name)}(?![\w-])", speech)
+        if m:
+            # Keep a title that is part of how they are known ("Father Aldric"),
+            # not a passing courtesy ("Master Karik").
+            return m.group(0) if m.group(0) in _names_of(state, aid) else name
+    return None
+
+
+def names_heard(state, event):
+    """[(id, name)] for every person whose name this event makes known to anyone
+    in the room who hears the words."""
+    speech, actor = event.get("speech"), event["actor"]
+    if not speech or actor not in S.all_ids(state):
+        return []
+    found = []
+    given = _introduced_name(state, speech)
+    if given:
+        if actor == S.PLAYER:
+            p = state["world"]["player"]
+            if p.get("name") == p.get("short"):  # the first name they give is theirs
+                p["name"] = given
+        found.append((actor, given))
+    target = event.get("target")
+    others = [o for o in S.in_room(state, event["room"]) if o != actor]
+    if target not in others and len(others) == 1:
+        target = others[0]  # spoken with nobody named: to the only one there
+    if target in others:
+        said = _said_name(state, speech, target)
+        if said:
+            found.append((target, said))
+    return found
+
+
+def _heard_words(event, line):
+    return bool(event.get("speech")) and f'"{event["speech"]}"' in (line or "")
+
+
 def apply(state, event, rng):
     """Perceive an event, write it into every perceiver's memory, and log it."""
     clock = state["world"]["clock"]
@@ -169,8 +253,18 @@ def apply(state, event, rng):
         S.actor(state, obs).setdefault("memory", []).append(
             {"t": clock["turn"], "time": clock["time"], "text": line, "importance": imp,
              "by": event["actor"]})
+    learned = []
+    names = names_heard(state, event)
+    # Hearers in the room who made out the words; the speaker knows what they said.
+    hearers = [o for o, line in perceptions.items()
+               if S.location(state, o) == event["room"] and _heard_words(event, line)]
+    for whom, name in names:
+        for who in hearers + [event["actor"]]:
+            if S.learn_name(state, who, whom, name):
+                learned.append(f"{who} knows {whom} as {name}")
     state["log"].append({"turn": clock["turn"], "time": clock["time"], "event": event,
-                         "perceived_by": perceptions, "checks": checks})
+                         "perceived_by": perceptions, "checks": checks,
+                         **({"learned": learned} if learned else {})})
     return perceptions, checks
 
 
