@@ -1,0 +1,88 @@
+{
+  "clock": {
+    "turn": 0,
+    "time": "08:20",
+    "mass_at": "09:00"
+  },
+  "rooms": {
+    "narthex": {
+      "desc": "Small stone entry hall. Holy water font, notice board, heavy oak door to the street.",
+      "adjacent": [
+        "nave"
+      ]
+    },
+    "nave": {
+      "desc": "Rows of worn wooden pews under a timber roof. Morning light through stained glass. The rear pews smell of beeswax polish.",
+      "adjacent": [
+        "narthex",
+        "sanctuary"
+      ]
+    },
+    "sanctuary": {
+      "desc": "Raised altar of pale stone, candle stands, a carved wooden screen. A side door leads to the sacristy.",
+      "adjacent": [
+        "nave",
+        "sacristy"
+      ]
+    },
+    "sacristy": {
+      "desc": "Cramped room of vestment cupboards and a wash basin. A low iron-banded door in the corner leads down.",
+      "adjacent": [
+        "sanctuary",
+        "crypt"
+      ]
+    },
+    "crypt": {
+      "desc": "Low vaulted cellar of old tombs, directly beneath the altar. Damp and cold.",
+      "adjacent": [
+        "sacristy"
+      ]
+    }
+  },
+  "doors": {
+    "sacristy-crypt": {
+      "locked": true,
+      "key_holder": "aldric",
+      "noise": "the hinges squeal loudly"
+    }
+  },
+  "objects": {
+    "crypt_key": {
+      "location": "aldric",
+      "desc": "Iron key on a cord around Father Aldric's neck, under his cassock."
+    },
+    "loose_stone": {
+      "location": "crypt",
+      "desc": "A stone in the north wall below the altar that slides out if pressed at the lower left corner.",
+      "hidden": true,
+      "find": "WIS -4 when searching the north wall"
+    },
+    "reliquary": {
+      "location": "behind loose_stone",
+      "desc": "Palm-sized tarnished silver box holding the knuckle bone of St. Aurel.",
+      "hidden": true
+    },
+    "chalice": {
+      "location": "sacristy",
+      "desc": "Silver chalice being polished for mass."
+    },
+    "parish_register": {
+      "location": "sacristy",
+      "desc": "Old leather ledger. An entry from 1961 notes 'relic moved below for safekeeping'.",
+      "hidden": false
+    }
+  },
+  "truth": [
+    "The Reliquary of St. Aurel is real and hidden behind the loose stone in the crypt.",
+    "Only Father Aldric knows its location. He was told by the previous priest, Father Benedict, in 1989.",
+    "Agnes saw Father Benedict carry a small silver box down to the crypt about forty years ago and has never mentioned it."
+  ],
+  "player": {
+    "name": "the traveller",
+    "short": "the traveller",
+    "appearance": "a travel-worn stranger",
+    "location": "narthex",
+    "known": [],
+    "memory": []
+  }
+}
