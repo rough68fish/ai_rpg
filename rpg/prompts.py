@@ -6,8 +6,9 @@ asserts that none of them slipped in.
 from . import selfimage
 from . import state as S
 
-MAX_MEMORIES = 15   # older memories, picked by importance
+MAX_MEMORIES = 20   # lines from older turns, picked a whole turn at a time by importance
 RECENT_TURNS = 6    # memories from this many recent turns are always kept, in full
+MIN_OLDER_IMPORTANCE = 3   # older turns drop passing thoughts (importance 2) and below
 
 RULES = """Rules:
 - You only know what is written here and what you remember. If something is
@@ -75,13 +76,27 @@ def seen_count(rec):
 
 def _select_memories(memories, turn, limit=MAX_MEMORIES, recent_turns=RECENT_TURNS):
     """Everything from the last few turns, so a conversation is never cut to one
-    side of it, plus the most important older memories. Returned in original
-    (chronological) order."""
+    side of it, plus the most important older turns. An older turn is kept or
+    dropped whole, so what someone said and the answers to it stay together; it
+    ranks by its most important memory, and loses its passing thoughts. Returned
+    in original (chronological) order."""
     recent = {i for i, m in enumerate(memories)
               if isinstance(m["t"], int) and m["t"] > turn - recent_turns}
-    older = [i for i in range(len(memories)) if i not in recent]
-    if len(older) > limit:
-        older = sorted(older, key=lambda i: (memories[i]["importance"], i), reverse=True)[:limit]
+    groups = {}   # turn number -> indexes; setup memories ("yesterday") stand alone
+    for i, m in enumerate(memories):
+        if i in recent:
+            continue
+        if not isinstance(m["t"], int):
+            groups[("setup", i)] = [i]
+        elif m["importance"] >= MIN_OLDER_IMPORTANCE:
+            groups.setdefault(m["t"], []).append(i)
+    ranked = sorted(groups.values(),
+                    key=lambda g: (max(memories[i]["importance"] for i in g), g[-1]), reverse=True)
+    older, used = set(), 0
+    for g in ranked:
+        if used + len(g) <= limit:
+            older.update(g)
+            used += len(g)
     return [memories[i] for i in sorted(recent.union(older))]
 
 
