@@ -644,8 +644,9 @@ Perceived events (the traveller's own memory, "I" is the traveller):
 {_bullets(lines, 'nothing happens')}
 
 Write 2 to 6 sentences of plain prose: this is read by the player, so no
-{{braces}} or ids. End by quoting anything said directly to the traveller. Do
-not ask the player what they do next.""")
+{{braces}} or ids. If someone spoke directly to the traveller, end by quoting
+it; if nobody did, end without a quote. Do not ask the player what they do
+next.""")
 
 
 def _unbrace(state, text):
@@ -664,7 +665,17 @@ def _unbrace(state, text):
 def narrate(state, lines, client):
     """Returns (prose, stats)."""
     reply, stats = client.chat(SYSTEM, narrate_message(state, lines), NARRATE_SCHEMA, llm.TEMP_CHARACTER)
-    return _unbrace(state, reply.get("text", "").strip()), stats
+    return _tidy_quotes(_unbrace(state, reply.get("text", "").strip())), stats
+
+
+def _tidy_quotes(text):
+    """The narrator sometimes opens a quote for words nobody said (it was told to
+    end on what was said to the traveller). Drop a bare opening quote at the end;
+    close any other quote left open."""
+    text = re.sub(r'\s*["“]\s*$', "", text)
+    if (text.count('"') + text.count("“") + text.count("”")) % 2:
+        text += '"'
+    return text
 
 
 # --- splitting the traveller's typed line ----------------------------------------
