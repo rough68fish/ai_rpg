@@ -6,7 +6,8 @@ asserts that none of them slipped in.
 from . import selfimage
 from . import state as S
 
-MAX_MEMORIES = 15
+MAX_MEMORIES = 15   # older memories, picked by importance
+RECENT_TURNS = 6    # memories from this many recent turns are always kept, in full
 
 RULES = """Rules:
 - You only know what is written here and what you remember. If something is
@@ -72,13 +73,16 @@ def seen_count(rec):
     return sum(1 for m in rec.get("memory", []) if not isinstance(m["t"], int))
 
 
-def _select_memories(memories, limit=MAX_MEMORIES):
-    """Most important and most recent, returned in original (chronological) order."""
-    if len(memories) <= limit:
-        return memories
-    scored = sorted(range(len(memories)),
-                    key=lambda i: (memories[i]["importance"], i), reverse=True)[:limit]
-    return [memories[i] for i in sorted(scored)]
+def _select_memories(memories, turn, limit=MAX_MEMORIES, recent_turns=RECENT_TURNS):
+    """Everything from the last few turns, so a conversation is never cut to one
+    side of it, plus the most important older memories. Returned in original
+    (chronological) order."""
+    recent = {i for i, m in enumerate(memories)
+              if isinstance(m["t"], int) and m["t"] > turn - recent_turns}
+    older = [i for i in range(len(memories)) if i not in recent]
+    if len(older) > limit:
+        older = sorted(older, key=lambda i: (memories[i]["importance"], i), reverse=True)[:limit]
+    return [memories[i] for i in sorted(recent.union(older))]
 
 
 def _when(entry):
@@ -91,7 +95,8 @@ def user_message(state, cid):
     room = rec["location"]
     memories = rec.get("memory", [])
     seen = seen_count(rec)
-    old, new = _select_memories(memories[:seen]), memories[seen:]
+    old = _select_memories(memories[:seen], world["clock"]["turn"])
+    new = memories[seen:]
     visible = [S.name_for(state, cid, o) + ("" if S.knows(state, cid, o) else " (name unknown)")
                for o in S.in_room(state, room) if o != cid]
     return f"""{S.time_line(state)}

@@ -87,23 +87,48 @@ def appearance(state, aid):
     return rec.get("appearance") or rec["identity"]["appearance"]
 
 
+def known_names(rec):
+    """{id: the name this person heard them called}. Old saves keep a plain list
+    of ids, which means "knows them by their usual name" (None)."""
+    known = rec.get("known", {})
+    return {k: None for k in known} if isinstance(known, list) else known
+
+
+def learn_name(state, who, whom, name=None):
+    """`who` now knows `whom` as `name` (None: their usual name). Returns True if
+    that is new. The first name heard sticks, so a later "Tomas" doesn't undo
+    "Father Tomas"."""
+    if who == whom:
+        return False
+    rec = actor(state, who)
+    known = known_names(rec)
+    if whom in known or (who != PLAYER and whom in rec["identity"].get("relationships", {})):
+        return False
+    known[whom] = name
+    rec["known"] = known
+    return True
+
+
 def knows(state, observer, other):
     """Does observer know other by name?"""
     if observer == other:
         return True
     rec = actor(state, observer)
-    if observer == PLAYER:
-        return other in rec.get("known", [])
-    return other in rec["identity"].get("relationships", {}) or other in rec.get("known", [])
+    if other in known_names(rec):
+        return True
+    return observer != PLAYER and other in rec["identity"].get("relationships", {})
 
 
 def name_for(state, observer, other):
-    """How observer refers to other: a name if known, otherwise a description."""
+    """How observer refers to other: the name they know them by, otherwise a
+    description."""
     if observer is None:
         return short(state, other)
     if observer == other:
         return "I"
-    return short(state, other) if knows(state, observer, other) else appearance(state, other)
+    if not knows(state, observer, other):
+        return appearance(state, other)
+    return known_names(actor(state, observer)).get(other) or short(state, other)
 
 
 def in_room(state, room):

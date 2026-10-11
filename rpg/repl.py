@@ -537,8 +537,7 @@ class Game:
             self._p("  no pending intents")
 
     def know(self, who, whom):
-        rec = S.actor(self.state, self._id(who))
-        rec.setdefault("known", []).append(self._id(whom))
+        S.learn_name(self.state, self._id(who), self._id(whom))
         self._p("  ok")
 
     def set_mode(self, who, mode):

@@ -70,7 +70,7 @@ Then `python replay.py` to read it back. `/commands` still drive each step by ha
 | `/log [n]` | Last n events with perception rolls, GM checks and state changes. |
 | `/prompt <who>` | The exact prompt `/act` would send, with the leakage check. |
 | `/roll <who> <STAT> [mod]` | Roll d20 under a stat by hand. |
-| `/know <who> <whom>` | `<who>` learns `<whom>`'s name. |
+| `/know <who> <whom>` | `<who>` learns `<whom>`'s name (debug shortcut). |
 | `/promote <who>`, `/demote <who>` | Switch between agent and GM-managed. |
 | `/save`, `/help`, `/quit` | |
 
@@ -182,7 +182,7 @@ A turn takes about 10–20 s. Plain text shows only progress and the narration; 
 
 `/promote` and `/demote` run the same switch by hand.
 
-**Learning names.** `know A B` is only accepted when B's name (full, first or surname) is in the speech of that event. The traveller has no modelled name, so any line they speak counts as an introduction. Speech whose target the GM left empty goes to the one person the event text names, if there is exactly one.
+**Learning names.** Code, no model: each person learns a name only by hearing it. When someone introduces themselves ("my name is Karik", "I am Father Tomas", "call me ..."), is called by name while spoken to ("Steady yourself, Pip"), or is introduced by someone else while in the room ("this is Father Tomas", "meet Pip"), everyone in the room who made out the words learns it, as it was said. A whisper they could not make out, or a voice from the next room, teaches nothing. The first name the traveller gives becomes their name for the GM. Names already in a character's relationships are known from the start. Speech whose target the GM left empty goes to the one person the event text names, if there is exactly one.
 
 **Model settings.** `think: false` on every call: with thinking on, Gemma 4 spent about 900 hidden tokens per call. Temperature is 0.8 for characters, 0.4 for the GM, with `num_ctx` 8192 and `keep_alive` 30m. Once the model is loaded, a character call takes about 1.5 s and a GM call 2–8 s.
 
