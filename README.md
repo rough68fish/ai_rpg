@@ -107,18 +107,40 @@ python replay.py runs/<run> --live          # page reloads itself and follows th
 
 `replay.py` writes `replay.html` into the run folder: a chat view of what the traveller experienced. For played turns, what you typed is on the right and the GM's narration on the left. For turns driven by hand, the left shows what the traveller heard and saw, captioned with how they know the speaker. Turn dividers and room notes mark time and place. Toggles show the dice rolls, the raw events behind each narrated turn, and, as faded bubbles, the events the traveller didn't perceive.
 
+## Web viewer
+
+Add `--web` to watch a game in the browser while it is played from the terminal, the page itself, or `send.py` from another shell. It needs FastAPI (`pip install -r requirements-web.txt`); the terminal game alone still needs no packages.
+
+```
+python play.py St_Aurel_1100 --web                 # terminal as usual, plus http://127.0.0.1:8000
+python play.py St_Aurel_1100 --web --no-terminal   # input only from the page or send.py
+python play.py St_Aurel_1100 --web --bind 0.0.0.0  # watch from another device on your network
+python play.py --continue runs/<run> --web         # the page shows the earlier turns too
+
+python send.py "I walk up to the altar"            # play a line, print what it produced
+python send.py /who /truth                         # several lines, in order
+python send.py --trace "I wait"                    # with the turn's details
+python send.py --watch                             # follow everything, whoever typed it
+```
+
+Every line, from anywhere, goes on one queue and is played in order, one turn at a time (the model is one GPU). The page shows each line with who sent it (terminal, web, cli), the steps of a turn as they happen, the narration, the turn details (toggle), and who is in which room. Everything is also written to `events.jsonl` in the run folder.
+
 ## Layout
 
 ```
 play.py              entry point
 replay.py            a run as a chat-style HTML page
+send.py              play a line in a game hosted with --web
+web/index.html       the web viewer page
 rpg/state.py         load/save, lookups, objects, d20 roll-under
 rpg/perception.py    who perceives an event, first-person rendering, memory writes
 rpg/prompts.py       character prompts from their own record, leakage check
 rpg/llm.py           Ollama /api/chat client (schema-constrained JSON replies)
 rpg/gm.py            GM resolve and narrate: prompts, branch-and-roll, validated state changes
 rpg/modes.py         promotion, demotion, memory summaries
-rpg/repl.py          the REPL
+rpg/repl.py          the commands; output goes out as events (print_event is the terminal)
+rpg/host.py          one game, one input queue, many listeners (--web)
+rpg/web.py           FastAPI app: the page, /api/input, /api/events, /ws
 modules/             playable modules (module.json, world.json, characters/*.json)
 framework.md         design: scene, perception rules, turn loop
 prompts.md           GM and character prompts with schemas

@@ -1,11 +1,9 @@
 """The REPL. Plain text plays a full turn (stage 4); /commands drive each step by
 hand and inspect what each character perceived, remembers and is prompted with."""
-import io
 import json
 import shlex
 import sys
 import textwrap
-from contextlib import redirect_stdout
 
 from . import gm
 from . import llm
@@ -46,13 +44,63 @@ Plain text            play a turn: the GM resolves what you do, characters with
 /help, /quit"""
 
 
+def print_event(ev):
+    """The terminal's view of the game's output events."""
+    kind, text = ev["kind"], ev.get("text", "")
+    if kind == "error":
+        print(text, file=sys.stderr)
+    elif kind == "narration":
+        print("\n" + textwrap.fill(text, 78, initial_indent="  ", subsequent_indent="  ") + "\n")
+    elif kind == "step":
+        print(f"  ... {text}", flush=True)
+    elif kind == "input":
+        if ev.get("source") != "terminal":
+            print(f"[{ev.get('source')}] > {text}", flush=True)
+    elif kind == "info" or (kind == "trace" and ev.get("verbose")):
+        print(text)
+    # other trace lines wait for /trace; "status" is for the web viewer
+
+
 class Game:
-    def __init__(self, state, run_dir, rng, client=None, debug=False):
+    """Game output goes out as events through `out` (one dict per message):
+    kind is info (command output), step (turn progress), trace (turn details,
+    shown in the terminal only by /trace or /verbose), narration, error, input
+    (a line someone typed) or status (clock and who is where)."""
+
+    def __init__(self, state, run_dir, rng, client=None, debug=False, out=print_event):
         self.state, self.run_dir, self.rng = state, run_dir, rng
         self.llm = client or llm.Client()
         self.debug = debug        # plain text is speech, not a turn
         self.verbose = debug      # stream every step of a turn
+        self.out = out
         self.last_trace = ""
+        self._trace = None        # lines of the turn being played
+
+    # --- output ------------------------------------------------------------
+    def emit(self, kind, text="", **extra):
+        clock = self.state["world"]["clock"]
+        self.out({"kind": kind, "text": text, "turn": clock["turn"], "time": clock["time"], **extra})
+
+    def _p(self, *parts, file=None, **_):
+        """print() for game output: an info event, or an error if sent to stderr.
+        During a turn the details are trace events unless /verbose is on."""
+        text = " ".join(str(p) for p in parts)
+        if file is sys.stderr:
+            self.emit("error", text)
+            return
+        if self._trace is not None:
+            self._trace.append(text)
+            self.emit("trace", text, verbose=self.verbose)
+            return
+        self.emit("info", text)
+
+    def status(self):
+        """Clock and where everyone is, for the web viewer's side panel."""
+        chars = [{"id": aid, "name": S.short(self.state, aid), "room": S.location(self.state, aid),
+                  "mode": "player" if aid == S.PLAYER else self.state["chars"][aid]["mode"]}
+                 for aid in S.all_ids(self.state)]
+        self.emit("status", S.time_line(self.state), chars=chars,
+                  module=self.state.get("module", {}).get("title", ""))
 
     # --- helpers ---------------------------------------------------------
     def _id(self, who):
@@ -66,16 +114,15 @@ class Game:
     def _emit(self, event):
         self._show(*P.apply(self.state, event, self.rng))
 
-    @staticmethod
-    def _show(perceptions, checks, quiet=False):
+    def _show(self, perceptions, checks, quiet=False):
         for c in checks:
             mark = "ok" if c["success"] else "miss"
-            print(f"  [roll] {c['actor']} {c['ability']} {c.get('why', '')}: "
+            self._p(f"  [roll] {c['actor']} {c['ability']} {c.get('why', '')}: "
                   f"{c['roll']} vs {c['target']} {mark}")
         for obs, line in perceptions.items():
-            print(f"  -> {obs}: {line}")
+            self._p(f"  -> {obs}: {line}")
         if not perceptions and not quiet:
-            print("  -> nobody else perceived it")
+            self._p("  -> nobody else perceived it")
 
     @staticmethod
     def _opts(words, flags):
@@ -99,7 +146,7 @@ class Game:
         volume = "whisper" if "whisper" in flags else "loud" if "loud" in flags else "normal"
         tid = self._id(target) if target else None
         if tid and S.location(self.state, tid) != S.location(self.state, aid):
-            print(f"  (note: {tid} is not in the {S.location(self.state, aid)}, so they won't hear it unless it's loud)")
+            self._p(f"  (note: {tid} is not in the {S.location(self.state, aid)}, so they won't hear it unless it's loud)")
         self._speak(aid, " ".join(words), volume, tid)
 
     def _speak(self, aid, speech, volume, tid):
@@ -127,10 +174,10 @@ class Game:
         aid = self._id(who)
         here = S.location(self.state, aid)
         if room not in self.state["world"]["rooms"]:
-            print(f"  no room '{room}'. Rooms: {', '.join(self.state['world']['rooms'])}")
+            self._p(f"  no room '{room}'. Rooms: {', '.join(self.state['world']['rooms'])}")
             return
         if room not in S.adjacent(self.state, here):
-            print(f"  {room} is not next to {here}")
+            self._p(f"  {room} is not next to {here}")
             return
         door = S.door_between(self.state, here, room)
         if door and door.get("locked"):
@@ -151,73 +198,73 @@ class Game:
         clock["time"] = f"{h + m // 60:02d}:{m % 60:02d}"
         clock["turn"] += 1
         path = S.save_snapshot(self.state, self.run_dir)
-        print(f"  turn {clock['turn']}, {clock['time']} (saved {path.name})")
+        self._p(f"  turn {clock['turn']}, {clock['time']} (saved {path.name})")
 
     def roll(self, who, ability, mod="0"):
         c = S.roll_under(self.state, self._id(who), ability.upper(), int(mod), self.rng)
-        print(f"  d20 = {c['roll']} vs {c['target']}: {'success' if c['success'] else 'failure'}")
+        self._p(f"  d20 = {c['roll']} vs {c['target']}: {'success' if c['success'] else 'failure'}")
 
     def look(self, who="player"):
         aid = self._id(who)
         room = S.location(self.state, aid)
         others = [S.name_for(self.state, aid, o) for o in S.in_room(self.state, room) if o != aid]
-        print(f"  {S.room_name(self.state, room)} ({room}): {self.state['world']['rooms'][room]['desc']}")
-        print(f"  you see: {', '.join(others) or 'nobody'}")
-        print(f"  exits: {', '.join(S.adjacent(self.state, room))}")
+        self._p(f"  {S.room_name(self.state, room)} ({room}): {self.state['world']['rooms'][room]['desc']}")
+        self._p(f"  you see: {', '.join(others) or 'nobody'}")
+        self._p(f"  exits: {', '.join(S.adjacent(self.state, room))}")
 
     def who(self):
         for aid in S.all_ids(self.state):
             rec = S.actor(self.state, aid)
             mode = "player" if aid == S.PLAYER else rec["mode"]
-            print(f"  {aid:8} {S.location(self.state, aid):10} {mode}")
+            self._p(f"  {aid:8} {S.location(self.state, aid):10} {mode}")
 
     def mind(self, who):
         aid = self._id(who)
         rec = S.actor(self.state, aid)
         for key in ("beliefs", "goals"):
             if key in rec:
-                print(f"  {key}:")
+                self._p(f"  {key}:")
                 for b in rec[key]:
-                    print(f"    - {b}")
-        print("  memory:")
+                    self._p(f"    - {b}")
+        self._p("  memory:")
         for m in rec.get("memory", []):
-            print(f"    [{m['t']}] ({m['importance']}) {m['text']}")
+            self._p(f"    [{m['t']}] ({m['importance']}) {m['text']}")
 
     def truth(self):
         w = self.state["world"]
         for t in w["truth"]:
-            print(f"  * {t}")
+            self._p(f"  * {t}")
         for oid, o in w["objects"].items():
             hidden = " (hidden)" if o.get("hidden") else ""
-            print(f"  {oid}{hidden} @ {o['location']}: {o['desc']}")
+            self._p(f"  {oid}{hidden} @ {o['location']}: {o['desc']}")
         for did, d in w["doors"].items():
-            print(f"  door {did}: {'locked' if d['locked'] else 'open'}")
+            self._p(f"  door {did}: {'locked' if d['locked'] else 'open'}")
 
     def log(self, n="5"):
         for entry in self.state["log"][-int(n):]:
             e = entry["event"]
-            print(f"  [{entry['turn']}] {e['actor']} @ {e['room']} ({e.get('volume')}"
+            self._p(f"  [{entry['turn']}] {e['actor']} @ {e['room']} ({e.get('volume')}"
                   f"{', subtle' if e.get('subtle') else ''}): {e['text']} {e.get('speech') or ''}")
             if entry.get("check"):
                 c = entry["check"]
-                print(f"      GM check {c['actor']} {c['ability']} {c['modifier']:+d}: "
+                self._p(f"      GM check {c['actor']} {c['ability']} {c['modifier']:+d}: "
                       f"{c['roll']} vs {c['target']}, {entry['branch']}")
             for c in entry["checks"]:
-                print(f"      roll {c['actor']} {c['ability']}: {c['roll']} vs {c['target']}")
+                self._p(f"      roll {c['actor']} {c['ability']}: {c['roll']} vs {c['target']}")
             for ch in entry.get("state_changes", []):
-                print(f"      change {ch['cmd']}: {'ok' if ch['ok'] else 'rejected'} ({ch['msg']})")
-            print(f"      perceived by: {', '.join(entry['perceived_by']) or 'nobody'}")
+                self._p(f"      change {ch['cmd']}: {'ok' if ch['ok'] else 'rejected'} ({ch['msg']})")
+            self._p(f"      perceived by: {', '.join(entry['perceived_by']) or 'nobody'}")
 
     def prompt(self, who):
         cid = self._id(who)
         if cid == S.PLAYER:
-            print("  the player has no prompt")
+            self._p("  the player has no prompt")
             return
         sysm = prompts.system_message(self.state, cid)
         user = prompts.user_message(self.state, cid)
-        print(textwrap.indent("=== system ===\n" + sysm + "\n\n=== user ===\n" + user, "  "))
+        self._p(textwrap.indent("=== system ===\n" + sysm + "\n\n=== user ===\n" + user, "  "))
         problems = prompts.check_leakage(self.state, cid, sysm + user)
-        print("  LEAKAGE: " + "; ".join(problems) if problems else "  leakage check: clean")
+        self._p("  LEAKAGE: " + "; ".join(problems) if problems else "  leakage check: clean")
 
     def _target_id(self, cid, text):
         """Map the model's free-text target ("Father Tomas", "the stranger") to an id."""
@@ -264,16 +311,16 @@ class Game:
         in stage 3."""
         cid = self._id(who)
         if cid == S.PLAYER:
-            print("  the player acts by typing")
+            self._p("  the player acts by typing")
             return
         rec = self.state["chars"][cid]
         if rec["mode"] != "agent":
-            print(f"  ({cid} is GM-managed; acting as an agent anyway)")
+            self._p(f"  ({cid} is GM-managed; acting as an agent anyway)")
         sysm = prompts.system_message(self.state, cid)
         user = prompts.user_message(self.state, cid)
         problems = prompts.check_leakage(self.state, cid, sysm + user)
         if problems:
-            print("  not sent, LEAKAGE: " + "; ".join(problems))
+            self._p("  not sent, LEAKAGE: " + "; ".join(problems))
             return
         new = rec.get("memory", [])[prompts.seen_count(rec):]
         try:
@@ -282,16 +329,16 @@ class Game:
             if note:
                 # One slip snowballs: the wrong name lands in memory and the next
                 # turn builds on it. Ask once more; keep the second answer.
-                print(f"  (re-asked: {note})")
+                self._p(f"  (re-asked: {note})")
                 reply, stats = self.llm.chat(sysm, user + "\n\nCheck before answering: " + note,
                                              prompts.CHARACTER_SCHEMA, llm.TEMP_CHARACTER)
         except llm.LLMError as e:
-            print(f"  {cid}: {e}", file=sys.stderr)
+            self._p(f"  {cid}: {e}", file=sys.stderr)
             return
         clock = self.state["world"]["clock"]
-        print(f"  ({stats['seconds']}s, {stats['prompt_tokens']} in / {stats['reply_tokens']} out)")
-        print(f"  thought: {reply.get('thought')}")
-        print(f"  mood:    {reply.get('mood')}")
+        self._p(f"  ({stats['seconds']}s, {stats['prompt_tokens']} in / {stats['reply_tokens']} out)")
+        self._p(f"  thought: {reply.get('thought')}")
+        self._p(f"  mood:    {reply.get('mood')}")
         rec.setdefault("memory", []).append(
             {"t": clock["turn"], "time": clock["time"], "importance": 2,
              "text": f"I thought: {reply.get('thought')} (I felt {reply.get('mood')})", "by": cid})
@@ -300,12 +347,12 @@ class Game:
 
         tid = self._target_id(cid, reply.get("target"))
         if reply.get("target"):
-            print(f"  target:  {reply['target']} -> {tid or '(not a person here)'}")
+            self._p(f"  target:  {reply['target']} -> {tid or '(not a person here)'}")
         if reply.get("speech"):
-            print(f"  says ({reply.get('volume', 'normal')}): {reply['speech']}")
+            self._p(f"  says ({reply.get('volume', 'normal')}): {reply['speech']}")
             self._speak(cid, reply["speech"], reply.get("volume") or "normal", tid)
         if reply.get("action"):
-            print(f"  tries:   {reply['action']}  [pending: /resolve]")
+            self._p(f"  tries:   {reply['action']}  [pending: /resolve]")
             self.state.setdefault("pending", []).append(
                 {"turn": clock["turn"], "actor": cid, "action": reply["action"],
                  "target": tid, "target_text": reply.get("target")})
@@ -313,44 +360,43 @@ class Game:
         rec["memories_seen"] = len(rec["memory"])
         rec["last_acted_turn"] = clock["turn"]
 
-    @staticmethod
-    def _edit_list(rec, key, add, drop):
+    def _edit_list(self, rec, key, add, drop):
         items = rec.setdefault(key, [])
         for line in drop or []:
             match = next((i for i in items if i.lower().strip(" .") == line.lower().strip(" .")), None)
             if match:
                 items.remove(match)
-                print(f"  {key} -: {match}")
+                self._p(f"  {key} -: {match}")
             else:
-                print(f"  {key} -: (no exact match, ignored) {line}")
+                self._p(f"  {key} -: (no exact match, ignored) {line}")
         for line in add or []:
             if line not in items:
                 items.append(line)
-                print(f"  {key} +: {line}")
+                self._p(f"  {key} +: {line}")
 
     def _gm(self, intents, tick=()):
         try:
             reports, stats = gm.resolve(self.state, intents, self.llm, self.rng, tick)
         except llm.LLMError as e:
-            print(f"  GM: {e}", file=sys.stderr)
+            self._p(f"  GM: {e}", file=sys.stderr)
             return False
-        print(f"  (GM {stats['seconds']}s, {stats['prompt_tokens']} in / {stats['reply_tokens']} out,"
+        self._p(f"  (GM {stats['seconds']}s, {stats['prompt_tokens']} in / {stats['reply_tokens']} out,"
               f" {len(reports)} events)")
         for r in reports:
             e = r["event"]
-            print(f"  * {r['actor']} @ {e['room']} ({e['volume']}{', subtle' if e['subtle'] else ''})")
+            self._p(f"  * {r['actor']} @ {e['room']} ({e['volume']}{', subtle' if e['subtle'] else ''})")
             c = r["check"]
             if c:
-                print(f"    check {c['ability']} {c['modifier']:+d} ({c['why']}): "
+                self._p(f"    check {c['ability']} {c['modifier']:+d} ({c['why']}): "
                       f"d20 = {c['roll']} vs {c['target']}, {r['branch'].upper()}")
-            print(f"    {e['text']}" + (f' "{e["speech"]}"' if e["speech"] else ""))
+            self._p(f"    {e['text']}" + (f' "{e["speech"]}"' if e["speech"] else ""))
             if c and r.get("other"):
-                print(f"    (other branch: {r['other']})")
+                self._p(f"    (other branch: {r['other']})")
             if r.get("note"):
-                print(f"    ({r['note']})")
+                self._p(f"    ({r['note']})")
             self._show(r["perceptions"], r["checks"])
             for ch in r["changes"]:
-                print(f"    change: {ch['cmd']} -> {'ok' if ch['ok'] else 'REJECTED'}: {ch['msg']}")
+                self._p(f"    change: {ch['cmd']} -> {'ok' if ch['ok'] else 'REJECTED'}: {ch['msg']}")
                 if ch["arrival"]:
                     self._show(*ch["arrival"], quiet=True)
         return True
@@ -358,7 +404,7 @@ class Game:
     def try_(self, text):
         """The traveller attempts something; the GM decides what happens."""
         if not text:
-            print("  /try <what you do>")
+            self._p("  /try <what you do>")
             return
         log_from = len(self.state["log"])
         if self._gm([self._player_intent(text)]):
@@ -369,15 +415,15 @@ class Game:
         try:
             split = gm.split_line(self.state, text, self.llm)
         except llm.LLMError as e:
-            print(f"  split: {e}", file=sys.stderr)
+            self._p(f"  split: {e}", file=sys.stderr)
             split = {}
-        print(f"  split: {split}")
+        self._p(f"  split: {split}")
         return {"actor": S.PLAYER, "action": text, **split}
 
     def resolve(self):
         intents = self.state.get("pending", [])
         if not intents:
-            print("  no pending intents; /act someone first")
+            self._p("  no pending intents; /act someone first")
             return
         # framework.md, turn loop step 6: managed characters tick in the same call.
         tick = [cid for cid, rec in self.state["chars"].items() if rec["mode"] == "managed"]
@@ -405,15 +451,15 @@ class Game:
     def _switch(self, cid, mode, why=""):
         """Promote or demote with a memory summary. Returns a one-line note."""
         report = (modes.promote if mode == "agent" else modes.demote)(self.state, cid, self.llm)
-        print(f"  {cid} -> {mode}{' (' + why + ')' if why else ''}: memories {report['before']}"
+        self._p(f"  {cid} -> {mode}{' (' + why + ')' if why else ''}: memories {report['before']}"
               f" -> {report['after']}")
         for line in report.get("summaries", []):
-            print(f"    summary: {line}")
+            self._p(f"    summary: {line}")
         for key in ("beliefs", "goals"):
             for line in report[key]:
-                print(f"    {key} +: {line}")
+                self._p(f"    {key} +: {line}")
         if report["error"]:
-            print(f"  summary skipped for {cid}: {report['error']}", file=sys.stderr)
+            self._p(f"  summary skipped for {cid}: {report['error']}", file=sys.stderr)
         verb = "takes notice of you" if mode == "agent" else "goes back to the background"
         return f"{S.short(self.state, cid)} {verb}" + (f" ({why})" if why else "")
 
@@ -426,17 +472,14 @@ class Game:
         start = len(player.setdefault("memory", []))
         log_from = len(self.state["log"])
         clock = self.state["world"]["clock"]
-        out = sys.stdout
         switches = []
+        step = lambda msg: self.emit("step", msg)
 
-        def step(msg):
-            print(f"  ... {msg}", file=out, flush=True)
-
-        trace = io.StringIO()
-        with redirect_stdout(sys.stdout if self.verbose else trace):
+        self._trace = []
+        try:
             if text:
                 step("the GM resolves what you do")
-                print(f"\n== you: {text}")
+                self._p(f"\n== you: {text}")
                 self._gm([self._player_intent(text)])
                 # Step 4: anyone the traveller engaged comes alive before acting.
                 for note in self._promote_engaged(log_from):
@@ -444,12 +487,12 @@ class Game:
                     switches.append(note)
             for cid in self._who_acts():
                 step(f"{S.short(self.state, cid)} acts")
-                print(f"\n== {cid} acts")
+                self._p(f"\n== {cid} acts")
                 self.act(cid)
             tick = [cid for cid, rec in self.state["chars"].items() if rec["mode"] == "managed"]
             if self.state.get("pending") or tick:
                 step("the GM resolves everyone else")
-                print("\n== GM resolves")
+                self._p("\n== GM resolves")
                 if self._gm(self.state.get("pending", []), tick):
                     self.state["pending"] = []
             modes.touch_contacts(self.state, log_from)
@@ -457,20 +500,22 @@ class Game:
                 step(f"{S.short(self.state, cid)} drifts out of the story (summarising)")
                 switches.append(self._switch(cid, "managed",
                                              f"no contact for {modes.DEMOTE_AFTER} turns"))
-        self.last_trace = trace.getvalue()
+        finally:
+            self.last_trace = "\n".join(self._trace)
+            self._trace = None
 
         lines = [m["text"] for m in player["memory"][start:]]
         step("the GM narrates")
         try:
             prose, stats = gm.narrate(self.state, lines, self.llm)
         except llm.LLMError as e:
-            print(f"  GM: {e}", file=sys.stderr)
+            self._p(f"  GM: {e}", file=sys.stderr)
             prose = " ".join(lines) or "Nothing happens."
         prose = " ".join(prose.split())
         problems = prompts.check_leakage(self.state, S.PLAYER, prose)
         if problems:
-            print("  NARRATION LEAKAGE: " + "; ".join(problems), file=sys.stderr)
-        print("\n" + textwrap.fill(prose, 78, initial_indent="  ", subsequent_indent="  ") + "\n")
+            self._p("  NARRATION LEAKAGE: " + "; ".join(problems), file=sys.stderr)
+        self.emit("narration", prose)
         self.state.setdefault("turns", []).append(
             {"turn": clock["turn"], "time": clock["time"], "input": text, "narration": prose,
              "room": S.location(self.state, S.PLAYER), "perceived": lines,
@@ -478,36 +523,44 @@ class Game:
         self.next_turn()
 
     def trace(self):
-        print(self.last_trace or "  no turn played yet")
+        self._p(self.last_trace or "  no turn played yet")
 
     def toggle_verbose(self):
         self.verbose = not self.verbose
-        print(f"  verbose {'on' if self.verbose else 'off'}")
+        self._p(f"  verbose {'on' if self.verbose else 'off'}")
 
     def pending(self):
         for p in self.state.get("pending", []):
-            print(f"  [{p['turn']}] {p['actor']}: {p['action']}"
+            self._p(f"  [{p['turn']}] {p['actor']}: {p['action']}"
                   f"{' -> ' + p['target_text'] if p.get('target_text') else ''}")
         if not self.state.get("pending"):
-            print("  no pending intents")
+            self._p("  no pending intents")
 
     def know(self, who, whom):
         rec = S.actor(self.state, self._id(who))
         rec.setdefault("known", []).append(self._id(whom))
-        print("  ok")
+        self._p("  ok")
 
     def set_mode(self, who, mode):
         cid = self._id(who)
         if self.state["chars"][cid]["mode"] == mode:
-            print(f"  {cid} is already {mode}")
+            self._p(f"  {cid} is already {mode}")
             return
         self._switch(cid, mode, "by hand")
 
     # --- dispatch ----------------------------------------------------------
-    def handle(self, line):
+    def handle(self, line, source="terminal"):
+        """Play one typed line. `source` says who typed it (terminal, web, cli)."""
         line = line.strip()
         if not line:
             return True
+        self.emit("input", line, source=source)
+        try:
+            return self._handle(line)
+        finally:
+            self.status()
+
+    def _handle(self, line):
         if not line.startswith("/"):
             if self.debug:
                 self.say("player", line.split())
@@ -542,19 +595,19 @@ class Game:
             "know": lambda: self.know(*args),
             "promote": lambda: self.set_mode(args[0], "agent"),
             "demote": lambda: self.set_mode(args[0], "managed"),
-            "save": lambda: print(f"  saved {S.save_snapshot(self.state, self.run_dir)}"),
-            "help": lambda: print(HELP),
-            "dump": lambda: print(json.dumps(S.actor(self.state, self._id(args[0])), indent=2)),
+            "save": lambda: self._p(f"  saved {S.save_snapshot(self.state, self.run_dir)}"),
+            "help": lambda: self._p(HELP),
+            "dump": lambda: self._p(json.dumps(S.actor(self.state, self._id(args[0])), indent=2)),
         }
         if cmd in ("quit", "exit", "q"):
             return False
         if cmd not in table:
-            print("  unknown command, try /help")
+            self._p("  unknown command, try /help")
             return True
         try:
             table[cmd]()
         except (IndexError, TypeError):
-            print("  wrong arguments, try /help")
+            self._p("  wrong arguments, try /help")
         except (ValueError, KeyError) as e:
-            print(f"  {e}")
+            self._p(f"  {e}")
         return True
