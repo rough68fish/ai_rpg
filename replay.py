@@ -112,8 +112,10 @@ def build(state, title, live=0):
     rooms = state["world"]["rooms"]
     log = state["log"]
     colours = {cid: i % PALETTE for i, cid in enumerate(state["chars"])}
-    first_move = next((e["moved"] for e in log if e.get("moved", [None])[0] == S.PLAYER), None)
-    start = first_move[1] if first_move else state["world"]["player"]["location"]
+    # Where the player started: the room of their first event (a person acts
+    # where they are), or where they still are if they never did anything.
+    first = next((e["event"] for e in log if e["event"]["actor"] == S.PLAYER), None)
+    start = first["room"] if first else state["world"]["player"]["location"]
 
     def room_note(room):
         return f'<div class="room"><b>{esc(room)}</b><span>{esc(rooms[room]["desc"])}</span></div>'
